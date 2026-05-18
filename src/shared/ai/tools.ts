@@ -236,6 +236,7 @@ export function executeSearchInRequests(
   }
 
   for (const req of requests) {
+    regex.lastIndex = 0; // Reset RegExp state for each request to avoid state-retention bugs!
     const matchLocations: string[] = [];
     let snippet = '';
 
