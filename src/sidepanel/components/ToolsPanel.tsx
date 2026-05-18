@@ -1209,6 +1209,11 @@ ${formInputs}
             {activeTool === 'graphql' && (() => {
               const graphqlRequests = requests.filter(r => {
                 if (r.url && (r.url.toLowerCase().includes('/graphql') || r.url.toLowerCase().includes('graphql'))) return true;
+                if (r.requestHeaders) {
+                  const accept = (r.requestHeaders['Accept'] || r.requestHeaders['accept'] || '').toLowerCase();
+                  const contentType = (r.requestHeaders['Content-Type'] || r.requestHeaders['content-type'] || '').toLowerCase();
+                  if (accept.includes('graphql') || contentType.includes('graphql')) return true;
+                }
                 if (r.requestBody) {
                   const bodyStr = r.requestBody.toLowerCase();
                   if (bodyStr.includes('"query"') || bodyStr.includes('"operationname"')) return true;
