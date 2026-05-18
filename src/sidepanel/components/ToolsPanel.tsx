@@ -64,6 +64,8 @@ type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' |
 export default function ToolsPanel({ initialTab = null, initialBase64 = '', initialJwt = '' }: Props) {
   // activeTool can be null (Dashboard grid) or a specific ToolType (Fullscreen popup overlay)
   const [activeTool, setActiveTool] = useState<ToolType | null>(initialTab);
+  const [showQuickSwitch, setShowQuickSwitch] = useState(false);
+  const [showEncModeDropdown, setShowEncModeDropdown] = useState(false);
 
   // --- 1. Base64 States ---
   const [b64Input, setB64Input] = useState(initialBase64);
@@ -582,26 +584,70 @@ ${formInputs}
             </div>
 
             {/* Quick Switch Navigator & Close Button Row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {/* Sleek Minimal Selector */}
-              <select
-                value={activeTool}
-                onChange={e => setActiveTool(e.target.value as ToolType)}
-                style={{
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--border-primary)',
-                  color: 'var(--text-primary)',
-                  fontSize: 10,
-                  padding: '4px 8px',
-                  borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
-                  fontWeight: 600
-                }}
-              >
-                {toolsList.map(t => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
-                ))}
-              </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+              {/* Sleek Custom Selector */}
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setShowQuickSwitch(!showQuickSwitch)}
+                  style={{
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-primary)',
+                    color: 'var(--text-primary)',
+                    fontSize: 10,
+                    padding: '5px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                >
+                  <span>{toolsList.find(t => t.id === activeTool)?.label}</span>
+                  <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>▼</span>
+                </button>
+                {showQuickSwitch && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 4,
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 'var(--radius-sm)',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                    zIndex: 100000,
+                    minWidth: 170,
+                    overflow: 'hidden'
+                  }}>
+                    {toolsList.map(t => (
+                      <div
+                        key={t.id}
+                        onClick={() => {
+                          setActiveTool(t.id);
+                          setShowQuickSwitch(false);
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                           fontSize: 10,
+                          cursor: 'pointer',
+                          color: activeTool === t.id ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                          background: activeTool === t.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                          transition: 'all 0.15s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
+                        onMouseLeave={e => e.currentTarget.style.background = activeTool === t.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
+                      >
+                        <span>{t.icon}</span>
+                        <span>{t.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               
               <button
                 onClick={() => setActiveTool(null)}
@@ -731,15 +777,78 @@ ${formInputs}
                   <label className="tool-inner-label">Input Plaintext / Ciphertext</label>
                   <textarea className="tool-textarea" style={{ height: 140 }} value={encInput} onChange={e => setEncInput(e.target.value)} placeholder="Type payload to encode/decode..." />
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <select className="tool-input-field" style={{ flex: 1, padding: 8 }} value={encMode} onChange={e => setEncMode(e.target.value as any)}>
-                    <option value="url">URL Encoding</option>
-                    <option value="html">HTML Entities</option>
-                    <option value="hex">Hexadecimal</option>
-                    <option value="unicode">Unicode Escape</option>
-                  </select>
-                  <button onClick={() => handleEncodeDecode('encode')} className="tool-btn-primary" style={{ padding: '9px 16px' }}>🔒 Encode</button>
-                  <button onClick={() => handleEncodeDecode('decode')} className="tool-btn-success" style={{ padding: '9px 16px' }}>🔓 Decode</button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <button
+                      onClick={() => setShowEncModeDropdown(!showEncModeDropdown)}
+                      style={{
+                        width: '100%',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-primary)',
+                        borderRadius: 'var(--radius-sm)',
+                        color: 'var(--text-primary)',
+                        fontSize: 11,
+                        padding: '10px 12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontWeight: 600
+                      }}
+                    >
+                      <span>
+                        {encMode === 'url' && 'URL Encoding'}
+                        {encMode === 'html' && 'HTML Entities'}
+                        {encMode === 'hex' && 'Hexadecimal'}
+                        {encMode === 'unicode' && 'Unicode Escape'}
+                      </span>
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▼</span>
+                    </button>
+                    {showEncModeDropdown && (
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '100%',
+                        left: 0,
+                        width: '100%',
+                        marginBottom: 4,
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-primary)',
+                        borderRadius: 'var(--radius-sm)',
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                        zIndex: 100000,
+                        overflow: 'hidden'
+                      }}>
+                        {([
+                          { value: 'url', label: 'URL Encoding' },
+                          { value: 'html', label: 'HTML Entities' },
+                          { value: 'hex', label: 'Hexadecimal' },
+                          { value: 'unicode', label: 'Unicode Escape' }
+                        ]).map(m => (
+                          <div
+                            key={m.value}
+                            onClick={() => {
+                              setEncMode(m.value as any);
+                              setShowEncModeDropdown(false);
+                            }}
+                            style={{
+                              padding: '10px 12px',
+                              fontSize: 11,
+                              cursor: 'pointer',
+                              color: encMode === m.value ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                              background: encMode === m.value ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                              transition: 'all 0.15s ease'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
+                            onMouseLeave={e => e.currentTarget.style.background = encMode === m.value ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
+                          >
+                            {m.label}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => handleEncodeDecode('encode')} className="tool-btn-primary" style={{ padding: '9px 16px', height: 38 }}>🔒 Encode</button>
+                  <button onClick={() => handleEncodeDecode('decode')} className="tool-btn-success" style={{ padding: '9px 16px', height: 38 }}>🔓 Decode</button>
                 </div>
                 <div className="tools-group">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -760,10 +869,28 @@ ${formInputs}
                 </div>
                 <div className="tools-group">
                   <label className="tool-inner-label">Method Type</label>
-                  <select className="tool-input-field" style={{ padding: 8 }} value={csrfMethod} onChange={e => setCsrfMethod(e.target.value as any)}>
-                    <option value="POST">POST</option>
-                    <option value="GET">GET</option>
-                  </select>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                    {['POST', 'GET'].map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setCsrfMethod(m as any)}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          background: csrfMethod === m ? 'rgba(0, 229, 255, 0.15)' : 'var(--bg-secondary)',
+                          border: csrfMethod === m ? '1px solid var(--accent-cyan)' : '1px solid var(--border-primary)',
+                          color: csrfMethod === m ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                          borderRadius: 'var(--radius-sm)',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          fontSize: 11,
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="tools-group">
                   <label className="tool-inner-label">Query/Post Parameters</label>

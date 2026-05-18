@@ -44,6 +44,12 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [filterDomain, setFilterDomain] = useState('');
 
+  // Custom Dropdown UI States
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [showMethodDropdown, setShowMethodDropdown] = useState(false);
+  const [showSchemeDropdown, setShowSchemeDropdown] = useState(false);
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+
   // Load initial requests and settings
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
@@ -295,15 +301,64 @@ export default function App() {
       <div className="project-bar">
         <div className="project-selector-wrapper">
           <span className="project-label">📁 Project:</span>
-          <select 
-            className="project-select"
-            value={settings.currentProjectId || 'default'}
-            onChange={(e) => handleSwitchProject(e.target.value)}
-          >
-            {(settings.projects || []).map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <button
+              onClick={() => setShowProjectDropdown(!showProjectDropdown)}
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)',
+                fontSize: 11,
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <span>{(settings.projects || []).find(p => p.id === (settings.currentProjectId || 'default'))?.name || 'Default Project'}</span>
+              <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>▼</span>
+            </button>
+            {showProjectDropdown && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                marginTop: 4,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-sm)',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                zIndex: 100000,
+                minWidth: 150,
+                overflow: 'hidden'
+              }}>
+                {(settings.projects || []).map(p => (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      handleSwitchProject(p.id);
+                      setShowProjectDropdown(false);
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      color: settings.currentProjectId === p.id ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                      background: settings.currentProjectId === p.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
+                    onMouseLeave={e => e.currentTarget.style.background = settings.currentProjectId === p.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
+                  >
+                    📁 {p.name}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <button className="add-project-btn" onClick={() => setShowNewProjectModal(true)} title="Create New Project">
           ➕ New Project
@@ -489,42 +544,211 @@ export default function App() {
               </div>
 
               {/* ADVANCED FILTER BAR */}
-              <div className="filter-options">
-                <select 
-                  className="filter-select" 
-                  value={filterMethod} 
-                  onChange={e => setFilterMethod(e.target.value)}
-                >
-                  <option value="ALL">Method: All</option>
-                  <option value="GET">GET</option>
-                  <option value="POST">POST</option>
-                  <option value="PUT">PUT</option>
-                  <option value="PATCH">PATCH</option>
-                  <option value="DELETE">DELETE</option>
-                  <option value="OPTIONS">OPTIONS</option>
-                </select>
+              <div className="filter-options" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                
+                {/* 1. Method Dropdown */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => {
+                      setShowMethodDropdown(!showMethodDropdown);
+                      setShowSchemeDropdown(false);
+                      setShowStatusDropdown(false);
+                    }}
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-secondary)',
+                      fontSize: 10,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontWeight: 600,
+                      height: 22,
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <span>Method: {filterMethod === 'ALL' ? 'All' : filterMethod}</span>
+                    <span style={{ fontSize: 7, color: 'var(--text-muted)' }}>▼</span>
+                  </button>
+                  {showMethodDropdown && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: 4,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                      zIndex: 100000,
+                      minWidth: 110,
+                      overflow: 'hidden'
+                    }}>
+                      {['ALL', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].map(m => (
+                        <div
+                          key={m}
+                          onClick={() => {
+                            setFilterMethod(m);
+                            setShowMethodDropdown(false);
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            fontSize: 10,
+                            cursor: 'pointer',
+                            color: filterMethod === m ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                            background: filterMethod === m ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
+                          onMouseLeave={e => e.currentTarget.style.background = filterMethod === m ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
+                        >
+                          {m === 'ALL' ? 'All' : m}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                <select 
-                  className="filter-select" 
-                  value={filterScheme} 
-                  onChange={e => setFilterScheme(e.target.value)}
-                >
-                  <option value="ALL">Scheme: All</option>
-                  <option value="HTTP">HTTP</option>
-                  <option value="HTTPS">HTTPS</option>
-                </select>
+                {/* 2. Scheme Dropdown */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => {
+                      setShowSchemeDropdown(!showSchemeDropdown);
+                      setShowMethodDropdown(false);
+                      setShowStatusDropdown(false);
+                    }}
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-secondary)',
+                      fontSize: 10,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontWeight: 600,
+                      height: 22,
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <span>Scheme: {filterScheme === 'ALL' ? 'All' : filterScheme}</span>
+                    <span style={{ fontSize: 7, color: 'var(--text-muted)' }}>▼</span>
+                  </button>
+                  {showSchemeDropdown && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: 4,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                      zIndex: 100000,
+                      minWidth: 110,
+                      overflow: 'hidden'
+                    }}>
+                      {['ALL', 'HTTP', 'HTTPS'].map(s => (
+                        <div
+                          key={s}
+                          onClick={() => {
+                            setFilterScheme(s);
+                            setShowSchemeDropdown(false);
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            fontSize: 10,
+                            cursor: 'pointer',
+                            color: filterScheme === s ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                            background: filterScheme === s ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
+                          onMouseLeave={e => e.currentTarget.style.background = filterScheme === s ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
+                        >
+                          {s === 'ALL' ? 'All' : s}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                <select 
-                  className="filter-select" 
-                  value={filterStatus} 
-                  onChange={e => setFilterStatus(e.target.value)}
-                >
-                  <option value="ALL">Status: All</option>
-                  <option value="2XX">2xx Success</option>
-                  <option value="3XX">3xx Redirection</option>
-                  <option value="4XX">4xx Client Error</option>
-                  <option value="5XX">5xx Server Error</option>
-                </select>
+                {/* 3. Status Dropdown */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => {
+                      setShowStatusDropdown(!showStatusDropdown);
+                      setShowMethodDropdown(false);
+                      setShowSchemeDropdown(false);
+                    }}
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-secondary)',
+                      fontSize: 10,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontWeight: 600,
+                      height: 22,
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <span>Status: {filterStatus === 'ALL' ? 'All' : filterStatus}</span>
+                    <span style={{ fontSize: 7, color: 'var(--text-muted)' }}>▼</span>
+                  </button>
+                  {showStatusDropdown && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: 4,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                      zIndex: 100000,
+                      minWidth: 130,
+                      overflow: 'hidden'
+                    }}>
+                      {[
+                        { value: 'ALL', label: 'All Statuses' },
+                        { value: '2XX', label: '2xx Success' },
+                        { value: '3XX', label: '3xx Redirection' },
+                        { value: '4XX', label: '4xx Client Error' },
+                        { value: '5XX', label: '5xx Server Error' }
+                      ].map(st => (
+                        <div
+                          key={st.value}
+                          onClick={() => {
+                            setFilterStatus(st.value);
+                            setShowStatusDropdown(false);
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            fontSize: 10,
+                            cursor: 'pointer',
+                            color: filterStatus === st.value ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                            background: filterStatus === st.value ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
+                          onMouseLeave={e => e.currentTarget.style.background = filterStatus === st.value ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
+                        >
+                          {st.label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 <input
                   className="filter-domain-input"
