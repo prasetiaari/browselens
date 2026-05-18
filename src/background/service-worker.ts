@@ -221,16 +221,22 @@ async function updateHeaderRules() {
 }
 
 // ---- Initialize ----
-async function init() {
-  await loadSettings();
-  await loadRequests();
-  try {
-    await updateHeaderRules();
-  } catch (err) {
-    console.error('[BrowseLens] Failed to update header rules on init:', err);
+let initPromise: Promise<void> | null = null;
+function ensureInit(): Promise<void> {
+  if (!initPromise) {
+    initPromise = (async () => {
+      await loadSettings();
+      await loadRequests();
+      try {
+        await updateHeaderRules();
+      } catch (err) {
+        console.error('[BrowseLens] Failed to update header rules on init:', err);
+      }
+    })();
   }
+  return initPromise;
 }
-init();
+ensureInit();
 
 // Open side panel on action click
 chrome.sidePanel
@@ -338,6 +344,7 @@ async function handleMessage(
   message: ExtensionMessage,
   sendResponse: (response: unknown) => void
 ) {
+  await ensureInit();
   switch (message.type) {
     case 'REQUEST_CAPTURED': {
       const request = message.payload as CapturedRequest;
