@@ -120,6 +120,8 @@ export default function ToolsPanel({ initialTab = null, initialBase64 = '', init
 
   // --- 9. GraphQL Traffic Analyzer States & Helpers ---
   const [selectedGraphqlReqId, setSelectedGraphqlReqId] = useState<string | null>(null);
+  const [graphqlTab, setGraphqlTab] = useState<'live' | 'history'>('live');
+  const [sessionStartTime] = useState(() => Date.now());
 
   const getGraphqlDetails = (req: CapturedRequest) => {
     let operationName = 'Anonymous';
@@ -1208,6 +1210,14 @@ ${formInputs}
             {/* --- GRAPHQL TRAFFIC ANALYZER WORKSPACE --- */}
             {activeTool === 'graphql' && (() => {
               const graphqlRequests = requests.filter(r => {
+                // 1. Session start time boundary filter
+                if (graphqlTab === 'live') {
+                  if (r.timestamp < sessionStartTime) return false;
+                } else {
+                  if (r.timestamp >= sessionStartTime) return false;
+                }
+
+                // 2. Heuristic checks
                 if (r.url && (r.url.toLowerCase().includes('/graphql') || r.url.toLowerCase().includes('graphql'))) return true;
                 if (r.requestHeaders) {
                   const accept = (r.requestHeaders['Accept'] || r.requestHeaders['accept'] || '').toLowerCase();
@@ -1276,8 +1286,67 @@ ${formInputs}
                       maxHeight: 'calc(100vh - 180px)',
                       overflowY: 'auto'
                     }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                        GraphQL Operations List
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                            Operations
+                          </span>
+                          
+                          <div style={{
+                            display: 'flex',
+                            background: 'var(--bg-primary)',
+                            border: '1px solid var(--border-primary)',
+                            borderRadius: 6,
+                            padding: 2,
+                            gap: 2
+                          }}>
+                            <button
+                              onClick={() => {
+                                setGraphqlTab('live');
+                                setSelectedGraphqlReqId(null);
+                              }}
+                              style={{
+                                background: graphqlTab === 'live' ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
+                                border: 'none',
+                                color: graphqlTab === 'live' ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                                fontSize: 8.5,
+                                fontWeight: 700,
+                                padding: '3px 6px',
+                                borderRadius: 4,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 3
+                              }}
+                            >
+                              <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#ff3366' }} />
+                              Live
+                            </button>
+                            <button
+                              onClick={() => {
+                                setGraphqlTab('history');
+                                setSelectedGraphqlReqId(null);
+                              }}
+                              style={{
+                                background: graphqlTab === 'history' ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
+                                border: 'none',
+                                color: graphqlTab === 'history' ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                                fontSize: 8.5,
+                                fontWeight: 700,
+                                padding: '3px 6px',
+                                borderRadius: 4,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 3
+                              }}
+                            >
+                              📁 History
+                            </button>
+                          </div>
+                        </div>
                       </div>
 
                       {graphqlRequests.length === 0 ? (
