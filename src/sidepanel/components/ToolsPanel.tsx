@@ -54,12 +54,12 @@ function md5(str: string): string {
 }
 
 interface Props {
-  initialTab?: 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | null;
+  initialTab?: 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | null;
   initialBase64?: string;
   initialJwt?: string;
 }
 
-type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf';
+type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter';
 
 export default function ToolsPanel({ initialTab = null, initialBase64 = '', initialJwt = '' }: Props) {
   // activeTool can be null (Dashboard grid) or a specific ToolType (Fullscreen popup overlay)
@@ -110,6 +110,45 @@ export default function ToolsPanel({ initialTab = null, initialBase64 = '', init
   // --- 7. SSRF Bypass States ---
   const [ssrfInput, setSsrfInput] = useState('127.0.0.1');
   const [ssrfBypasses, setSsrfBypasses] = useState<{ label: string; payload: string }[]>([]);
+
+  // --- 8. DOM Element Visualizer States ---
+  const [highlighterActive, setHighlighterActive] = useState(false);
+
+  const togglePageHighlighter = () => {
+    if (typeof chrome === 'undefined' || !chrome.tabs) {
+      alert('This tool is only available in the Chrome Extension environment.');
+      return;
+    }
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (!activeTab?.id) {
+        alert('Could not find the active browser tab.');
+        return;
+      }
+
+      if (activeTab.url && (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('edge://') || activeTab.url.startsWith('about:'))) {
+        alert('Cannot inspect browser internal pages (chrome://). Please open a normal website first!');
+        return;
+      }
+
+      chrome.tabs.sendMessage(activeTab.id, {
+        type: 'BROWSELENS_TOGGLE_HIGHLIGHTS'
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(chrome.runtime.lastError);
+          alert('Could not communicate with the page. Please visit a webpage and reload it to activate BrowseLens highlighter!');
+          return;
+        }
+        if (response) {
+          setHighlighterActive(response.active);
+        } else {
+          setHighlighterActive(prev => !prev);
+        }
+      });
+    });
+  };
+
 
 
   // --- Event Listeners for Tab Bridging ---
@@ -443,7 +482,8 @@ ${formInputs}
     { id: 'csrf', label: 'CSRF Exploit Builder', icon: '📝', desc: 'Build and compile auto-submit exploit pages instantly.' },
     { id: 'urlparser', label: 'URL Query Parser', icon: '🎯', desc: 'Dissect, manipulate, and send rebuilt URLs to Repeater.' },
     { id: 'crypto', label: 'Crypto Hash offline', icon: '🔑', desc: 'Generate offline MD5, SHA-1, SHA-256 and SHA-512.' },
-    { id: 'ssrf', label: 'SSRF Host Bypasser', icon: '🚀', desc: 'Obfuscate localhost IPs into decimal, octal and wildcard domains.' }
+    { id: 'ssrf', label: 'SSRF Host Bypasser', icon: '🚀', desc: 'Obfuscate localhost IPs into decimal, octal and wildcard domains.' },
+    { id: 'highlighter', label: 'DOM Visual Highlighter', icon: '🎯', desc: 'Scan and visually highlight all forms & links on the active page.' }
   ] as const;
 
   return (
@@ -892,6 +932,67 @@ ${formInputs}
                       <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#ff3366', wordBreak: 'break-all' }}>{b.payload}</div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* --- DOM ELEMENT VISUALIZER WORKSPACE --- */}
+            {activeTool === 'highlighter' && (
+              <div className="highlighter-tool" style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 600, margin: '0 auto', textAlign: 'center', padding: '16px 0' }}>
+                <div style={{ fontSize: 44 }}>🎯</div>
+                <div>
+                  <h3 style={{ margin: '0 0 6px 0', color: 'var(--accent-cyan)', fontSize: 14 }}>DOM Element Visualizer</h3>
+                  <p style={{ margin: 0, fontSize: 11, color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    Inject real-time visual overlays directly into the active browser tab to locate entry points, input forms, and hyperlinks instantly.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'center', margin: '6px 0' }}>
+                  <button
+                    onClick={togglePageHighlighter}
+                    className={highlighterActive ? "tool-btn-success" : "tool-btn-primary"}
+                    style={{
+                      padding: '12px 20px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 6,
+                      width: '100%',
+                      maxWidth: 320,
+                      boxShadow: highlighterActive ? '0 0 20px rgba(0, 255, 136, 0.3)' : '0 0 16px rgba(0, 229, 255, 0.15)',
+                      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }}
+                  >
+                    {highlighterActive ? "🟢 Visual Highlights: ACTIVE" : "🎯 Inject Highlights on Page"}
+                  </button>
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-primary)', borderRadius: 8, padding: 14, textAlign: 'left' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: 11, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)', paddingBottom: 6 }}>💡 Visual Indicators Guide</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <div style={{ width: 14, height: 14, borderRadius: 3, border: '2px dashed #ff3366', background: 'rgba(255,51,102,0.1)', flexShrink: 0, marginTop: 1 }} />
+                      <div>
+                        <span style={{ fontSize: 11, fontWeight: 'bold', color: '#ff3366' }}>Input & Action Forms</span>
+                        <p style={{ margin: '2px 0 0 0', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.3 }}>
+                          Forms will be outlined in **dashed neon red** with a hovering tag displaying `[METHOD]` and `[action]` targets. Perfect for targeting CSRF, XSS, or SQLi entry points.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <div style={{ width: 14, height: 14, borderRadius: 3, border: '2px dashed #00e5ff', background: 'rgba(0,229,255,0.1)', flexShrink: 0, marginTop: 1 }} />
+                      <div>
+                        <span style={{ fontSize: 11, fontWeight: 'bold', color: '#00e5ff' }}>Hyperlinks & Redirects</span>
+                        <p style={{ margin: '2px 0 0 0', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.3 }}>
+                          Hyperlinks will be outlined in **dashed neon cyan** with a hovering tag displaying the exact target `[href]`. Helps audit target URLs, open redirects, or hidden pathways.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="tool-alert-warning" style={{ textAlign: 'left', lineHeight: 1.4 }}>
+                  ⚠️ **Troubleshooting**: If highlights do not appear immediately, please reload the active webpage tab so Chrome can inject BrowseLens content script, then click the trigger button again!
                 </div>
               </div>
             )}
