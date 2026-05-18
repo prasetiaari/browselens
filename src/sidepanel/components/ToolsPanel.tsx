@@ -1208,7 +1208,7 @@ ${formInputs}
             {/* --- GRAPHQL TRAFFIC ANALYZER WORKSPACE --- */}
             {activeTool === 'graphql' && (() => {
               const graphqlRequests = requests.filter(r => {
-                if (r.url.toLowerCase().includes('/graphql') || r.url.toLowerCase().includes('graphql')) return true;
+                if (r.url && (r.url.toLowerCase().includes('/graphql') || r.url.toLowerCase().includes('graphql'))) return true;
                 if (r.requestBody) {
                   const bodyStr = r.requestBody.toLowerCase();
                   if (bodyStr.includes('"query"') || bodyStr.includes('"operationname"')) return true;
@@ -1340,7 +1340,7 @@ ${formInputs}
 
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 9, color: 'var(--text-muted)' }}>
                                 <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '70%' }}>
-                                  {new URL(r.url).pathname}
+                                  {(() => { try { return new URL(r.url).pathname; } catch { return r.url || ''; } })()}
                                 </span>
                                 <span>
                                   {new Date(r.timestamp).toLocaleTimeString()}
