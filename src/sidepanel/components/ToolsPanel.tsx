@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { CapturedRequest } from '../../shared/types';
 
 // Standalone pure-JS MD5 implementation
 function md5(str: string): string {
@@ -54,14 +55,15 @@ function md5(str: string): string {
 }
 
 interface Props {
-  initialTab?: 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | null;
+  initialTab?: 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | 'graphql' | null;
   initialBase64?: string;
   initialJwt?: string;
+  requests?: CapturedRequest[];
 }
 
-type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter';
+type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | 'graphql';
 
-export default function ToolsPanel({ initialTab = null, initialBase64 = '', initialJwt = '' }: Props) {
+export default function ToolsPanel({ initialTab = null, initialBase64 = '', initialJwt = '', requests = [] }: Props) {
   // activeTool can be null (Dashboard grid) or a specific ToolType (Fullscreen popup overlay)
   const [activeTool, setActiveTool] = useState<ToolType | null>(initialTab);
   const [showQuickSwitch, setShowQuickSwitch] = useState(false);
@@ -115,6 +117,84 @@ export default function ToolsPanel({ initialTab = null, initialBase64 = '', init
 
   // --- 8. DOM Element Visualizer States ---
   const [highlighterActive, setHighlighterActive] = useState(false);
+
+  // --- 9. GraphQL Traffic Analyzer States & Helpers ---
+  const [selectedGraphqlReqId, setSelectedGraphqlReqId] = useState<string | null>(null);
+
+  const getGraphqlDetails = (req: CapturedRequest) => {
+    let operationName = 'Anonymous';
+    let operationType: 'query' | 'mutation' | 'subscription' = 'query';
+    let queryStr = '';
+    let variablesStr = '';
+    let isIntrospection = false;
+
+    // 1. Try to extract from requestBody
+    if (req.requestBody) {
+      try {
+        const parsed = JSON.parse(req.requestBody);
+        if (parsed.operationName) {
+          operationName = parsed.operationName;
+        }
+        if (parsed.query) {
+          queryStr = parsed.query;
+        }
+        if (parsed.variables) {
+          variablesStr = JSON.stringify(parsed.variables, null, 2);
+        }
+      } catch {
+        // Fallback parsing if JSON parsing fails (e.g. multipart or query-string format)
+        const opNameMatch = req.requestBody.match(/"operationName"\s*:\s*"([^"]+)"/);
+        if (opNameMatch) operationName = opNameMatch[1];
+
+        const queryMatch = req.requestBody.match(/"query"\s*:\s*"([^"]+)"/);
+        if (queryMatch) queryStr = queryMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      }
+    }
+
+    // 2. Try to extract from URL if queryStr is still empty
+    if (!queryStr) {
+      try {
+        const urlObj = new URL(req.url);
+        const queryParam = urlObj.searchParams.get('query');
+        if (queryParam) queryStr = queryParam;
+        
+        const opParam = urlObj.searchParams.get('operationName');
+        if (opParam) operationName = opParam;
+        
+        const varsParam = urlObj.searchParams.get('variables');
+        if (varsParam) variablesStr = varsParam;
+      } catch {}
+    }
+
+    // 3. Determine operation type (query vs mutation vs subscription)
+    if (queryStr) {
+      const normalizedQuery = queryStr.trim().toLowerCase();
+      if (normalizedQuery.startsWith('mutation')) {
+        operationType = 'mutation';
+      } else if (normalizedQuery.startsWith('subscription')) {
+        operationType = 'subscription';
+      } else {
+        operationType = 'query';
+      }
+
+      // Check if it's an introspection query
+      if (
+        normalizedQuery.includes('__schema') ||
+        normalizedQuery.includes('__type') ||
+        normalizedQuery.includes('__typename')
+      ) {
+        isIntrospection = true;
+      }
+    }
+
+    return {
+      operationName,
+      operationType,
+      queryStr: queryStr || req.requestBody || '',
+      variablesStr: variablesStr || '{}',
+      isIntrospection
+    };
+  };
 
   const togglePageHighlighter = () => {
     if (typeof chrome === 'undefined' || !chrome.tabs) {
@@ -485,11 +565,12 @@ ${formInputs}
     { id: 'urlparser', label: 'URL Query Parser', icon: '🎯', desc: 'Dissect, manipulate, and send rebuilt URLs to Repeater.' },
     { id: 'crypto', label: 'Crypto Hash offline', icon: '🔑', desc: 'Generate offline MD5, SHA-1, SHA-256 and SHA-512.' },
     { id: 'ssrf', label: 'SSRF Host Bypasser', icon: '🚀', desc: 'Obfuscate localhost IPs into decimal, octal and wildcard domains.' },
-    { id: 'highlighter', label: 'DOM Visual Highlighter', icon: '🎯', desc: 'Scan and visually highlight all forms & links on the active page.' }
+    { id: 'highlighter', label: 'DOM Visual Highlighter', icon: '🎯', desc: 'Scan and visually highlight all forms & links on the active page.' },
+    { id: 'graphql', label: 'GraphQL Traffic Analyzer', icon: '🧬', desc: 'Auto-discover GraphQL operations, query types, variables, and audit introspection vulnerabilities.' }
   ] as const;
 
   return (
-    <div className="tools-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="tools-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
       
       {/* 1. MAIN GRID DASHBOARD (Rendered when no active tool is selected) */}
       {activeTool === null ? (
@@ -1063,7 +1144,7 @@ ${formInputs}
               </div>
             )}
 
-            {/* --- DOM ELEMENT VISUALIZER WORKSPACE --- */}
+             {/* --- DOM ELEMENT VISUALIZER WORKSPACE --- */}
             {activeTool === 'highlighter' && (
               <div className="highlighter-tool" style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 600, margin: '0 auto', textAlign: 'center', padding: '16px 0' }}>
                 <div style={{ fontSize: 44 }}>🎯</div>
@@ -1123,6 +1204,288 @@ ${formInputs}
                 </div>
               </div>
             )}
+
+            {/* --- GRAPHQL TRAFFIC ANALYZER WORKSPACE --- */}
+            {activeTool === 'graphql' && (() => {
+              const graphqlRequests = requests.filter(r => {
+                if (r.url.toLowerCase().includes('/graphql') || r.url.toLowerCase().includes('graphql')) return true;
+                if (r.requestBody) {
+                  const bodyStr = r.requestBody.toLowerCase();
+                  if (bodyStr.includes('"query"') || bodyStr.includes('"operationname"')) return true;
+                }
+                return false;
+              });
+
+              const selectedReq = graphqlRequests.find(r => r.id === selectedGraphqlReqId);
+              const details = selectedReq ? getGraphqlDetails(selectedReq) : null;
+
+              const importToRepeater = () => {
+                if (!selectedReq || !details) return;
+                const headersObj: Record<string, string> = { ...selectedReq.requestHeaders };
+                if (!headersObj['Content-Type'] && !headersObj['content-type']) {
+                  headersObj['Content-Type'] = 'application/json';
+                }
+                
+                const repeaterPayload = {
+                  url: selectedReq.url,
+                  method: selectedReq.method,
+                  headers: headersObj,
+                  body: selectedReq.requestBody || JSON.stringify({
+                    query: details.queryStr,
+                    operationName: details.operationName === 'Anonymous' ? undefined : details.operationName,
+                    variables: JSON.parse(details.variablesStr || '{}')
+                  }, null, 2)
+                };
+
+                window.dispatchEvent(new CustomEvent('repeater-import', { detail: repeaterPayload }));
+                alert('GraphQL operation successfully imported to Repeater!');
+              };
+
+              return (
+                <div className="graphql-tool" style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%', minHeight: 'calc(100vh - 120px)' }}>
+                  
+                  {/* Summary Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: 12, border: '1px solid var(--border-primary)', borderRadius: 8 }}>
+                    <div>
+                      <h4 style={{ margin: '0 0 4px 0', fontSize: 13, color: 'var(--accent-cyan)' }}>🧬 GraphQL Traffic Dissector</h4>
+                      <p style={{ margin: 0, fontSize: 10, color: 'var(--text-muted)' }}>
+                        Natively discover, dissect, and audit all GraphQL queries without sending payload tokens to the cloud.
+                      </p>
+                    </div>
+                    <div style={{ fontSize: 10, fontWeight: 700, padding: '4px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 4, color: 'var(--text-secondary)' }}>
+                      Total Captured: <span style={{ color: 'var(--accent-cyan)' }}>{graphqlRequests.length}</span>
+                    </div>
+                  </div>
+
+                  {/* Two Panel Layout */}
+                  <div style={{ display: 'flex', flex: 1, gap: 16, minHeight: 0 }}>
+                    
+                    {/* Left Panel: Operations List */}
+                    <div style={{
+                      flex: selectedGraphqlReqId ? 1 : 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                      borderRight: selectedGraphqlReqId ? '1px solid var(--border-primary)' : 'none',
+                      paddingRight: selectedGraphqlReqId ? 16 : 0,
+                      maxHeight: 'calc(100vh - 180px)',
+                      overflowY: 'auto'
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                        GraphQL Operations List
+                      </div>
+
+                      {graphqlRequests.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '40px 16px', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-primary)', borderRadius: 8, color: 'var(--text-muted)' }}>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📡</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 2 }}>No GraphQL Traffic Discovered</div>
+                          <div style={{ fontSize: 10, lineHeight: 1.3 }}>Interact with the target website or reload pages to capture queries.</div>
+                        </div>
+                      ) : (
+                        graphqlRequests.map(r => {
+                          const reqDetails = getGraphqlDetails(r);
+                          const isSelected = r.id === selectedGraphqlReqId;
+
+                          const badgeColor = 
+                            reqDetails.operationType === 'mutation' 
+                              ? '#d152ff' 
+                              : reqDetails.operationType === 'subscription'
+                              ? '#ffb800' 
+                              : '#00e5ff'; 
+
+                          return (
+                            <div
+                              key={r.id}
+                              onClick={() => setSelectedGraphqlReqId(isSelected ? null : r.id)}
+                              style={{
+                                background: isSelected ? 'rgba(0, 229, 255, 0.05)' : 'var(--bg-secondary)',
+                                border: `1px solid ${isSelected ? 'var(--accent-cyan)' : 'var(--border-primary)'}`,
+                                borderRadius: 6,
+                                padding: 10,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 6
+                              }}
+                              onMouseEnter={e => { if(!isSelected) e.currentTarget.style.border = '1px solid rgba(0, 229, 255, 0.3)'; }}
+                              onMouseLeave={e => { if(!isSelected) e.currentTarget.style.border = '1px solid var(--border-primary)'; }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{
+                                    fontSize: 8,
+                                    fontWeight: 800,
+                                    padding: '2px 5px',
+                                    borderRadius: 3,
+                                    background: `${badgeColor}15`,
+                                    color: badgeColor,
+                                    border: `1px solid ${badgeColor}30`,
+                                    textTransform: 'uppercase'
+                                  }}>
+                                    {reqDetails.operationType}
+                                  </span>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                                    {reqDetails.operationName}
+                                  </span>
+                                </div>
+                                <span style={{ fontSize: 9, color: r.status !== undefined && r.status >= 200 && r.status < 300 ? '#00ff88' : '#ff3366', fontFamily: 'monospace' }}>
+                                  {r.status || 'PENDING'}
+                                </span>
+                              </div>
+                              
+                              <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {reqDetails.queryStr.replace(/\s+/g, ' ')}
+                              </div>
+
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 9, color: 'var(--text-muted)' }}>
+                                <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '70%' }}>
+                                  {new URL(r.url).pathname}
+                                </span>
+                                <span>
+                                  {new Date(r.timestamp).toLocaleTimeString()}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Right Panel: Selected Operation Inspector */}
+                    {selectedReq && details && (
+                      <div style={{
+                        flex: 1.2,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 12,
+                        maxHeight: 'calc(100vh - 180px)',
+                        overflowY: 'auto',
+                        background: 'rgba(255, 255, 255, 0.01)',
+                        border: '1px solid var(--border-primary)',
+                        borderRadius: 8,
+                        padding: 16
+                      }}>
+                        
+                        {/* Title Bar */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-primary)', paddingBottom: 10 }}>
+                          <div>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase', fontWeight: 800 }}>Operation Inspector</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-cyan)' }}>{details.operationName}</span>
+                          </div>
+                          
+                          <button
+                            onClick={importToRepeater}
+                            className="tool-btn-primary"
+                            style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, borderRadius: 4 }}
+                          >
+                            🚀 Send to Repeater
+                          </button>
+                        </div>
+
+                        {/* Introspection Security Audit Card */}
+                        <div style={{
+                          background: details.isIntrospection ? 'rgba(255, 51, 102, 0.08)' : 'rgba(0, 229, 255, 0.03)',
+                          border: `1px solid ${details.isIntrospection ? 'rgba(255, 51, 102, 0.3)' : 'rgba(0, 229, 255, 0.15)'}`,
+                          borderRadius: 6,
+                          padding: 10
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: details.isIntrospection ? '#ff3366' : 'var(--accent-cyan)', marginBottom: 4 }}>
+                            {details.isIntrospection ? '⚠️ Security Issue: Schema Introspection Detected!' : '🛡️ GraphQL Security Advisory'}
+                          </div>
+                          <p style={{ margin: 0, fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                            {details.isIntrospection 
+                              ? 'This query attempts schema discovery (__schema/__type). Enabling introspection in production allows attackers to reconstruct the entire schema, database relations, and custom operations, accelerating target recon.'
+                              : 'Check if Schema Introspection is enabled by sending an introspection query to the endpoint. If enabled, use tools like GraphQL Voyager to visually map the entire API landscape.'}
+                          </p>
+                          
+                          {!details.isIntrospection && (
+                            <button
+                              onClick={() => {
+                                const introQuery = `query IntrospectionQuery { __schema { queryType { name } mutationType { name } } }`;
+                                navigator.clipboard.writeText(JSON.stringify({ query: introQuery }));
+                                alert('Introspection query payload copied to clipboard!');
+                              }}
+                              className="tool-copy-trigger"
+                              style={{ marginTop: 6, fontSize: 9, padding: '2px 6px' }}
+                            >
+                              📋 Copy Introspection Test Payload
+                            </button>
+                          )}
+                        </div>
+
+                        {/* GraphQL Query / Mutation Block */}
+                        <div>
+                          <label className="tool-inner-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <span>GraphQL Query String</span>
+                            <button onClick={() => handleCopy(details.queryStr)} className="tool-copy-trigger" style={{ fontSize: 9 }}>Copy Query</button>
+                          </label>
+                          <pre style={{
+                            margin: 0,
+                            padding: 10,
+                            background: 'var(--bg-primary)',
+                            border: '1px solid var(--border-primary)',
+                            borderRadius: 6,
+                            color: '#e2e8f0',
+                            fontSize: 10.5,
+                            fontFamily: 'monospace',
+                            overflowX: 'auto',
+                            maxHeight: 250,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all'
+                          }}>
+                            {details.queryStr}
+                          </pre>
+                        </div>
+
+                        {/* GraphQL Variables Block */}
+                        <div>
+                          <label className="tool-inner-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <span>Variables (JSON)</span>
+                            <button onClick={() => handleCopy(details.variablesStr)} className="tool-copy-trigger" style={{ fontSize: 9 }}>Copy Variables</button>
+                          </label>
+                          <pre style={{
+                            margin: 0,
+                            padding: 10,
+                            background: 'var(--bg-primary)',
+                            border: '1px solid var(--border-primary)',
+                            borderRadius: 6,
+                            color: '#a0aec0',
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                            overflowX: 'auto',
+                            maxHeight: 120,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all'
+                          }}>
+                            {details.variablesStr}
+                          </pre>
+                        </div>
+
+                        {/* Endpoint Details */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 10, borderTop: '1px solid var(--border-primary)', paddingTop: 10 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Target Endpoint:</span>
+                            <span style={{ color: 'var(--text-primary)', wordBreak: 'break-all', textAlign: 'right', maxWidth: '70%', fontFamily: 'monospace' }}>{selectedReq.url}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Request Method:</span>
+                            <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{selectedReq.method}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>MIME Type:</span>
+                            <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{selectedReq.mimeType || 'application/json'}</span>
+                          </div>
+                        </div>
+
+                      </div>
+                    )}
+
+                  </div>
+
+                </div>
+              );
+            })()}
 
           </div>
         </div>

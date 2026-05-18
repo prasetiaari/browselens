@@ -818,7 +818,7 @@ export default function App() {
         </div>
 
         <div style={{ display: activeMainTab === 'tools' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-          <ToolsPanel initialTab={toolsInitialTab} initialBase64={toolsInitialBase64Text} initialJwt={toolsInitialJwtText} />
+          <ToolsPanel initialTab={toolsInitialTab} initialBase64={toolsInitialBase64Text} initialJwt={toolsInitialJwtText} requests={requests} />
         </div>
       </div>
 
