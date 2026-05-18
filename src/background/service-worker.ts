@@ -472,6 +472,44 @@ async function handleMessage(
           responseBody = '[Could not read response body]';
         }
 
+        // Create CapturedRequest representation for Requester/Repeater replayed requests
+        const replayedRequest: CapturedRequest = {
+          id: `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          timestamp: startTime,
+          source: 'requester',
+          method,
+          url,
+          requestHeaders: headers,
+          requestBody: body || undefined,
+          requestBodySize: body ? body.length : 0,
+          status: response.status,
+          statusText: response.statusText,
+          responseHeaders,
+          responseBody: responseBody,
+          responseBodySize: responseBody.length,
+          mimeType: responseHeaders['content-type'] || responseHeaders['Content-Type'] || 'text/plain',
+          duration,
+        };
+
+        // Passive scan and save to project history
+        try {
+          replayedRequest.vulnerabilities = runPassiveScan(replayedRequest);
+        } catch (scanErr) {
+          console.error('[BrowseLens] Passive scan failed for replayed request:', scanErr);
+        }
+
+        capturedRequests.push(replayedRequest);
+        if (capturedRequests.length > 1000) {
+          capturedRequests = capturedRequests.slice(-1000);
+        }
+        saveRequests();
+
+        // Broadcast to all open side panels so they update dynamically in real time
+        chrome.runtime.sendMessage({
+          type: 'REQUEST_CAPTURED',
+          payload: replayedRequest,
+        }).catch(() => {});
+
         sendResponse({
           success: true,
           response: {

@@ -7,7 +7,7 @@ export interface CapturedRequest {
   id: string;
   timestamp: number;
   tabId?: number;
-  source: 'devtools' | 'content-script';
+  source: 'devtools' | 'content-script' | 'requester';
 
   // Request
   method: string;
