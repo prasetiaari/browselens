@@ -3,19 +3,29 @@ import type { CapturedRequest, ExtensionSettings } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import RequestList from './components/RequestList';
 import RequestDetail from './components/RequestDetail';
+import RequestDiff from './components/RequestDiff';
 import Repeater from './components/Repeater';
 import ChatPanel from './components/ChatPanel';
 import Settings from './components/Settings';
+import ToolsPanel from './components/ToolsPanel';
 
-type MainTab = 'network' | 'chat' | 'settings';
+type MainTab = 'network' | 'chat' | 'tools' | 'settings';
 type NetworkSubTab = 'history' | 'requester';
 
 export default function App() {
   const [activeMainTab, setActiveMainTab] = useState<MainTab>('network');
   const [activeNetworkTab, setActiveNetworkTab] = useState<NetworkSubTab>('history');
   
+  // Tools bridging states
+  const [toolsInitialTab, setToolsInitialTab] = useState<'base64' | 'jwt'>('base64');
+  const [toolsInitialBase64Text, setToolsInitialBase64Text] = useState('');
+  const [toolsInitialJwtText, setToolsInitialJwtText] = useState('');
+  
   const [requests, setRequests] = useState<CapturedRequest[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<CapturedRequest | null>(null);
+  
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedForCompare, setSelectedForCompare] = useState<CapturedRequest[]>([]);
   
   const [repeaterRequest, setRepeaterRequest] = useState<{
     method: string; url: string; headers: string; body: string;
@@ -24,6 +34,10 @@ export default function App() {
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
   const [filter, setFilter] = useState('');
   
+  // Project Management States
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+
   // Advanced filters
   const [filterMethod, setFilterMethod] = useState('ALL');
   const [filterScheme, setFilterScheme] = useState('ALL');
@@ -32,11 +46,22 @@ export default function App() {
 
   // Load initial requests and settings
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_REQUESTS' }, (response) => {
-      if (response?.requests) setRequests(response.requests);
-    });
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
-      if (response?.settings) setSettings(response.settings);
+      if (response?.settings) {
+        setSettings(response.settings);
+        // Initialize requests matching the current active project partition
+        chrome.runtime.sendMessage({ 
+          type: 'SWITCH_PROJECT', 
+          payload: { projectId: response.settings.currentProjectId || 'default' } 
+        }, (res) => {
+          if (res?.requests) setRequests(res.requests);
+        });
+      } else {
+        // Fallback to old behavior if settings aren't stored
+        chrome.runtime.sendMessage({ type: 'GET_REQUESTS' }, (res) => {
+          if (res?.requests) setRequests(res.requests);
+        });
+      }
     });
   }, []);
 
@@ -52,6 +77,13 @@ export default function App() {
             return updated;
           }
           return [...prev, message.payload];
+        });
+
+        setSelectedRequest(prev => {
+          if (prev && prev.id === message.payload.id) {
+            return { ...prev, ...message.payload };
+          }
+          return prev;
         });
       }
     };
@@ -69,15 +101,129 @@ export default function App() {
     setActiveNetworkTab('requester');
   }, []);
 
-  const handleAskAI = useCallback((_req: CapturedRequest) => {
+  const handleAskAI = useCallback((prompt: string) => {
     setActiveMainTab('chat');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('ai-trigger-prompt', { detail: { prompt } }));
+    }, 100);
   }, []);
+
+  const handleSendToBase64 = useCallback((text: string) => {
+    setToolsInitialBase64Text(text);
+    setToolsInitialTab('base64');
+    setActiveMainTab('tools');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('tools-trigger-base64', { detail: { text } }));
+    }, 50);
+  }, []);
+
+  const handleSendToJwt = useCallback((text: string) => {
+    setToolsInitialJwtText(text);
+    setToolsInitialTab('jwt');
+    setActiveMainTab('tools');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('tools-trigger-jwt', { detail: { text } }));
+    }, 50);
+  }, []);
+
+  const handleSelectRequest = useCallback((req: CapturedRequest) => {
+    if (compareMode) {
+      setSelectedForCompare(prev => {
+        const exists = prev.some(r => r.id === req.id);
+        if (exists) {
+          return prev.filter(r => r.id !== req.id);
+        }
+        if (prev.length >= 2) {
+          return [prev[0], req];
+        }
+        return [...prev, req];
+      });
+    } else {
+      setSelectedRequest(req);
+    }
+  }, [compareMode]);
 
   const handleClearRequests = useCallback(() => {
     chrome.runtime.sendMessage({ type: 'CLEAR_REQUESTS' });
     setRequests([]);
     setSelectedRequest(null);
   }, []);
+
+  const handleExportSession = useCallback(() => {
+    const dataStr = JSON.stringify(requests, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browselens-session-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [requests]);
+
+  const handleImportSession = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target?.result as string);
+        if (Array.isArray(imported)) {
+          chrome.runtime.sendMessage({ type: 'SET_REQUESTS', payload: imported }, (response) => {
+            if (response?.success) {
+              setRequests(imported);
+              setSelectedRequest(null);
+            }
+          });
+        } else {
+          alert('Invalid session file format (must be JSON array).');
+        }
+      } catch (err) {
+        alert('Failed to parse session file: ' + err);
+      }
+    };
+    reader.readAsText(file);
+  }, []);
+
+  const handleSwitchProject = useCallback((projectId: string) => {
+    chrome.runtime.sendMessage({ type: 'SWITCH_PROJECT', payload: { projectId } }, (response) => {
+      if (response?.success) {
+        setSettings(prev => ({
+          ...prev,
+          currentProjectId: projectId,
+        }));
+        setRequests(response.requests || []);
+        setSelectedRequest(null);
+        setSelectedForCompare([]);
+      }
+    });
+  }, []);
+
+  const handleCreateProject = useCallback((name: string) => {
+    if (!name.trim()) return;
+    const newProject = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
+      name: name.trim(),
+      createdAt: Date.now(),
+      targetScope: '',
+      customHeaders: [],
+    };
+
+    const updatedSettings = {
+      ...settings,
+      projects: [...(settings.projects || []), newProject],
+      currentProjectId: newProject.id,
+    };
+
+    chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', payload: updatedSettings }, (response) => {
+      if (response?.success) {
+        setSettings(updatedSettings);
+        handleSwitchProject(newProject.id);
+        setShowNewProjectModal(false);
+        setNewProjectName('');
+      }
+    });
+  }, [settings, handleSwitchProject]);
 
   const filteredRequests = requests.filter(r => {
     if (!r) return false;
@@ -145,6 +291,25 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Project Selector Bar */}
+      <div className="project-bar">
+        <div className="project-selector-wrapper">
+          <span className="project-label">📁 Project:</span>
+          <select 
+            className="project-select"
+            value={settings.currentProjectId || 'default'}
+            onChange={(e) => handleSwitchProject(e.target.value)}
+          >
+            {(settings.projects || []).map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+        <button className="add-project-btn" onClick={() => setShowNewProjectModal(true)} title="Create New Project">
+          ➕ New Project
+        </button>
+      </div>
+
       {/* Header */}
       <div className="header">
         <div className="header-logo">
@@ -165,10 +330,45 @@ export default function App() {
           <span>BrowseLens</span>
         </div>
         <div className="header-actions">
+          <input
+            type="file"
+            id="import-session-file"
+            style={{ display: 'none' }}
+            onChange={handleImportSession}
+            accept=".json"
+          />
+          <button className="icon-btn" onClick={() => document.getElementById('import-session-file')?.click()} title="Import Session">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
+          </button>
+          <button className="icon-btn" onClick={handleExportSession} title="Export Session">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+          </button>
           <button className="icon-btn" onClick={handleClearRequests} title="Clear requests">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="3,6 5,6 21,6" />
               <path d="M19,6V20a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6M8,6V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6" />
+            </svg>
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => {
+              chrome.windows.create({
+                url: chrome.runtime.getURL('src/sidepanel/index.html'),
+                type: 'popup',
+                width: 1200,
+                height: 800
+              });
+            }}
+            title="Open Standalone App Window (Full Screen)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
             </svg>
           </button>
           <button
@@ -208,6 +408,15 @@ export default function App() {
             </svg>
             AI Chat
           </button>
+          <button
+            className={`tab-btn ${activeMainTab === 'tools' ? 'active' : ''}`}
+            onClick={() => setActiveMainTab('tools')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+            </svg>
+            Tools
+          </button>
         </div>
       )}
 
@@ -217,129 +426,209 @@ export default function App() {
           <Settings settings={settings} onSave={setSettings} />
         )}
         
-        {activeMainTab === 'network' && (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Sub Tab Navigation for Network */}
-            <div className="sub-tab-nav">
-              <button 
-                className={`sub-tab-btn ${activeNetworkTab === 'history' ? 'active' : ''}`}
-                onClick={() => setActiveNetworkTab('history')}
-              >
-                Requests History
-              </button>
-              <button 
-                className={`sub-tab-btn ${activeNetworkTab === 'requester' ? 'active' : ''}`}
-                onClick={() => setActiveNetworkTab('requester')}
-              >
-                Requester
-              </button>
-            </div>
+        <div style={{ display: activeMainTab === 'network' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+          {/* Sub Tab Navigation for Network */}
+          <div className="sub-tab-nav">
+            <button 
+              className={`sub-tab-btn ${activeNetworkTab === 'history' ? 'active' : ''}`}
+              onClick={() => setActiveNetworkTab('history')}
+            >
+              Requests History
+            </button>
+            <button 
+              className={`sub-tab-btn ${activeNetworkTab === 'requester' ? 'active' : ''}`}
+              onClick={() => setActiveNetworkTab('requester')}
+            >
+              Requester
+            </button>
+          </div>
 
-            {/* Network Sub-Tab Content */}
-            <div className="sub-tab-content">
-              {activeNetworkTab === 'history' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  
-                  {/* SEARCH BAR */}
-                  <div className="filter-bar">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-                      <circle cx="11" cy="11" r="8" />
-                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg>
-                    <input
-                      className="filter-input"
-                      placeholder="Search URL or headers..."
-                      value={filter}
-                      onChange={e => setFilter(e.target.value)}
-                    />
-                    {requests.length > 0 && (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 10, whiteSpace: 'nowrap' }}>
-                        {filteredRequests.length}/{requests.length}
-                      </span>
-                    )}
-                  </div>
+          {/* Network Sub-Tab Content */}
+          <div className="sub-tab-content">
+            <div style={{ display: activeNetworkTab === 'history' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+              
+              {/* SEARCH BAR */}
+              <div className="filter-bar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  className="filter-input"
+                  placeholder="Search URL or headers..."
+                  value={filter}
+                  onChange={e => setFilter(e.target.value)}
+                />
+                {requests.length > 0 && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 10, whiteSpace: 'nowrap', marginRight: 6 }}>
+                    {filteredRequests.length}/{requests.length}
+                  </span>
+                )}
+                <button
+                  className={`filter-chip ${compareMode ? 'active' : ''}`}
+                  onClick={() => {
+                    setCompareMode(!compareMode);
+                    setSelectedForCompare([]);
+                    setSelectedRequest(null);
+                  }}
+                  style={{
+                    padding: '2px 8px',
+                    fontSize: 10,
+                    borderRadius: 4,
+                    border: '1px solid var(--border-color)',
+                    background: compareMode ? 'rgba(0, 229, 255, 0.1)' : 'transparent',
+                    color: compareMode ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    borderColor: compareMode ? 'var(--accent-cyan)' : 'var(--border-color)',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  ⚔️ Compare
+                </button>
+              </div>
 
-                  {/* ADVANCED FILTER BAR */}
-                  <div className="filter-options">
-                    <select 
-                      className="filter-select" 
-                      value={filterMethod} 
-                      onChange={e => setFilterMethod(e.target.value)}
-                    >
-                      <option value="ALL">Method: All</option>
-                      <option value="GET">GET</option>
-                      <option value="POST">POST</option>
-                      <option value="PUT">PUT</option>
-                      <option value="PATCH">PATCH</option>
-                      <option value="DELETE">DELETE</option>
-                      <option value="OPTIONS">OPTIONS</option>
-                    </select>
+              {/* ADVANCED FILTER BAR */}
+              <div className="filter-options">
+                <select 
+                  className="filter-select" 
+                  value={filterMethod} 
+                  onChange={e => setFilterMethod(e.target.value)}
+                >
+                  <option value="ALL">Method: All</option>
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                  <option value="DELETE">DELETE</option>
+                  <option value="OPTIONS">OPTIONS</option>
+                </select>
 
-                    <select 
-                      className="filter-select" 
-                      value={filterScheme} 
-                      onChange={e => setFilterScheme(e.target.value)}
-                    >
-                      <option value="ALL">Scheme: All</option>
-                      <option value="HTTP">HTTP</option>
-                      <option value="HTTPS">HTTPS</option>
-                    </select>
+                <select 
+                  className="filter-select" 
+                  value={filterScheme} 
+                  onChange={e => setFilterScheme(e.target.value)}
+                >
+                  <option value="ALL">Scheme: All</option>
+                  <option value="HTTP">HTTP</option>
+                  <option value="HTTPS">HTTPS</option>
+                </select>
 
-                    <select 
-                      className="filter-select" 
-                      value={filterStatus} 
-                      onChange={e => setFilterStatus(e.target.value)}
-                    >
-                      <option value="ALL">Status: All</option>
-                      <option value="2XX">2xx Success</option>
-                      <option value="3XX">3xx Redirection</option>
-                      <option value="4XX">4xx Client Error</option>
-                      <option value="5XX">5xx Server Error</option>
-                    </select>
+                <select 
+                  className="filter-select" 
+                  value={filterStatus} 
+                  onChange={e => setFilterStatus(e.target.value)}
+                >
+                  <option value="ALL">Status: All</option>
+                  <option value="2XX">2xx Success</option>
+                  <option value="3XX">3xx Redirection</option>
+                  <option value="4XX">4xx Client Error</option>
+                  <option value="5XX">5xx Server Error</option>
+                </select>
 
-                    <input
-                      className="filter-domain-input"
-                      placeholder="Domain/Subdomain..."
-                      value={filterDomain}
-                      onChange={e => setFilterDomain(e.target.value)}
-                    />
-                  </div>
+                <input
+                  className="filter-domain-input"
+                  placeholder="Domain/Subdomain..."
+                  value={filterDomain}
+                  onChange={e => setFilterDomain(e.target.value)}
+                />
+              </div>
 
-                  {/* LIST & DETAIL */}
-                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+              {/* LIST & DETAIL */}
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <RequestList
+                    requests={filteredRequests}
+                    selected={selectedRequest}
+                    selectedList={selectedForCompare}
+                    onSelect={handleSelectRequest}
+                  />
+                </div>
+                
+                {compareMode ? (
+                  selectedForCompare.length === 2 ? (
                     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                      <RequestList
-                        requests={filteredRequests}
-                        selected={selectedRequest}
-                        onSelect={setSelectedRequest}
+                      <RequestDiff
+                        requestA={selectedForCompare[0]}
+                        requestB={selectedForCompare[1]}
+                        onClose={() => setSelectedForCompare([])}
                       />
                     </div>
-                    
-                    {selectedRequest && (
-                      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                        <RequestDetail
-                          request={selectedRequest}
-                          onSendToRepeater={handleSendToRepeater}
-                          onAskAI={handleAskAI}
-                          onClose={() => setSelectedRequest(null)}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                  ) : (
+                    <div style={{
+                      padding: 12,
+                      textAlign: 'center',
+                      color: 'var(--text-muted)',
+                      fontSize: 10,
+                      background: 'var(--bg-light)',
+                      borderTop: '1px solid var(--border-color)'
+                    }}>
+                      ⚔️ Compare Mode Active. Select <b>{2 - selectedForCompare.length}</b> more request{2 - selectedForCompare.length > 1 ? 's' : ''} from history to compare.
+                    </div>
+                  )
+                ) : (
+                  selectedRequest && (
+                    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                      <RequestDetail
+                        request={selectedRequest}
+                        onSendToRepeater={handleSendToRepeater}
+                        onAskAI={handleAskAI}
+                        onClose={() => setSelectedRequest(null)}
+                        onSendToBase64={handleSendToBase64}
+                        onSendToJwt={handleSendToJwt}
+                      />
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
 
-              {activeNetworkTab === 'requester' && (
-                <Repeater initialRequest={repeaterRequest} />
-              )}
+            <div style={{ display: activeNetworkTab === 'requester' ? 'block' : 'none', height: '100%' }}>
+              <Repeater initialRequest={repeaterRequest} />
             </div>
           </div>
-        )}
+        </div>
         
-        {activeMainTab === 'chat' && (
+        <div style={{ display: activeMainTab === 'chat' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
           <ChatPanel />
-        )}
+        </div>
+
+        <div style={{ display: activeMainTab === 'tools' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+          <ToolsPanel initialTab={toolsInitialTab} initialBase64={toolsInitialBase64Text} initialJwt={toolsInitialJwtText} />
+        </div>
       </div>
+
+      {/* New Project Modal */}
+      {showNewProjectModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3>➕ Create New Project</h3>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Organize request history, scope filters, and auth header injection separately.
+            </p>
+            <input
+              type="text"
+              className="modal-input"
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="e.g. HackerOne - Zooplus"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateProject(newProjectName);
+                if (e.key === 'Escape') setShowNewProjectModal(false);
+              }}
+            />
+            <div className="modal-actions">
+              <button className="modal-btn cancel" onClick={() => setShowNewProjectModal(false)}>
+                Cancel
+              </button>
+              <button className="modal-btn confirm" onClick={() => handleCreateProject(newProjectName)}>
+                Create Project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

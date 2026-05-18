@@ -81,6 +81,17 @@ export default function ChatPanel() {
     );
   };
 
+  useEffect(() => {
+    const triggerListener = (e: Event) => {
+      const customEvent = e as CustomEvent<{ prompt: string }>;
+      if (customEvent.detail && customEvent.detail.prompt) {
+        handleSend(customEvent.detail.prompt);
+      }
+    };
+    window.addEventListener('ai-trigger-prompt', triggerListener);
+    return () => window.removeEventListener('ai-trigger-prompt', triggerListener);
+  }, [loading]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -90,6 +101,36 @@ export default function ChatPanel() {
 
   return (
     <div className="chat-panel">
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 16px',
+        borderBottom: '1px solid var(--border-color)',
+        background: 'var(--bg-light)'
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 'bold', color: 'var(--text-secondary)' }}>AI PENTEST ASSISTANT</span>
+        <button
+          onClick={() => handleSend("Generate a comprehensive Markdown penetration testing report summarizing all captured traffic, detailing any vulnerabilities found, and suggesting remediation steps.")}
+          disabled={loading}
+          style={{
+            background: 'rgba(0, 229, 255, 0.1)',
+            border: '1px solid var(--accent-cyan)',
+            borderRadius: 4,
+            padding: '2px 8px',
+            fontSize: 10,
+            color: 'var(--accent-cyan)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-cyan)'; e.currentTarget.style.color = 'var(--bg-dark)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0, 229, 255, 0.1)'; e.currentTarget.style.color = 'var(--accent-cyan)'; }}
+        >
+          📋 Gen Pentest Report
+        </button>
+      </div>
+
       <div className="chat-messages">
         {messages.length === 0 && !loading && (
           <div className="chat-empty">
@@ -143,16 +184,25 @@ export default function ChatPanel() {
         {/* Show active tool calls while loading */}
         {loading && toolCalls.length > 0 && (
           <div className="chat-msg assistant">
-            <div className="chat-tool-calls">
-              {toolCalls.map((tc) => (
-                <div key={tc.id} className="chat-tool-call">
-                  <span className="tool-icon">🔧</span>
-                  <span className="tool-name">{tc.name}</span>
-                  <span className={`tool-status-${tc.status}`}>
-                    {tc.status === 'running' ? '⟳ running...' : tc.status === 'done' ? '✓ done' : '✗ error'}
-                  </span>
+            <div className="chat-msg-bubble">
+              <div className="chat-tool-calls">
+                {toolCalls.map((tc) => (
+                  <div key={tc.id} className="chat-tool-call">
+                    <span className="tool-icon">🔧</span>
+                    <span className="tool-name">{tc.name}</span>
+                    <span className={`tool-status-${tc.status}`}>
+                      {tc.status === 'running' ? '⟳ running...' : tc.status === 'done' ? '✓ done' : '✗ error'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {/* Show thinking indicator if all tools are done but still loading */}
+              {toolCalls.every(tc => tc.status !== 'running') && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                  <span className="spinner" />
+                  <span style={{ color: 'var(--text-muted)' }}>Synthesizing results<span className="loading-dots" /></span>
                 </div>
-              ))}
+              )}
             </div>
           </div>
         )}

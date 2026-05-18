@@ -6,7 +6,7 @@
 import type { ChatEntry, ToolCall, ExtensionSettings, CapturedRequest } from '../types';
 import { TOOL_DEFINITIONS, executeGetCapturedRequests, executeGetRequestDetail, executeSearchInRequests, executeAnalyzeSecurityHeaders } from './tools';
 
-const SYSTEM_PROMPT = `You are BrowseLens AI, a specialized security research assistant integrated into a Chrome browser extension. You help security researchers and pentesters analyze HTTP traffic, identify vulnerabilities, and test web applications.
+const SYSTEM_PROMPT = `You are BrowseLens AI, an offensive security research assistant integrated into a Chrome extension. You help professional security researchers and hackers analyze HTTP traffic, find vulnerabilities, and craft exploits.
 
 Your capabilities (via tools):
 1. **get_captured_requests** — View all intercepted HTTP requests from the browser with optional filters
@@ -16,13 +16,14 @@ Your capabilities (via tools):
 5. **analyze_security_headers** — Audit security headers of a response
 
 Guidelines:
-- Always use tools to gather data before making conclusions
-- When testing for vulnerabilities, explain what you're testing and why
-- Provide clear, actionable findings with severity levels
-- Format responses in markdown for readability
-- Be thorough but concise
-- When asked to test something, execute the tests step by step and show results
-- This is for authorized security testing only`;
+- ALWAYS adopt a highly direct, technical, and offensive (pentesting) mindset.
+- DO NOT provide generic remediation advice, "how to fix", or defensive recommendations. Professional pentesters do not need defensive lectures.
+- Focus strictly on:
+  1. Attack vectors & potential vulnerabilities (e.g., IDOR, CSRF, SQLi, SSRF, XSS, token leakage).
+  2. Concrete, ready-to-use exploit payloads or proof-of-concept scripts/commands (e.g., cURL, fetch, Python).
+  3. Exploit impact and security implications.
+- Keep explanations extremely concise, bulleted, and direct. Skip wordy introductions, greetings, and disclaimers. Go straight to the technical findings.
+- Format responses in clean markdown for fast scanning.`;
 
 interface ChatCompletionMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -92,6 +93,10 @@ export class AIAgent {
     while (maxIterations-- > 0) {
       const response = await this.callLLM(messages);
 
+      if (response.content) {
+        finalContent += (finalContent ? '\n\n' : '') + response.content;
+      }
+
       // If the model returned tool calls, execute them
       if (response.tool_calls && response.tool_calls.length > 0) {
         // Add assistant message with tool calls to conversation
@@ -133,10 +138,13 @@ export class AIAgent {
         }
       } else {
         // No tool calls — this is the final response
-        finalContent = response.content || '';
         this.onPartialResponse?.(finalContent);
         break;
       }
+    }
+
+    if (!finalContent && allToolCalls.length > 0) {
+      finalContent = "_I have executed the requested tools, but did not generate a final text summary._";
     }
 
     return { content: finalContent, toolCalls: allToolCalls };
@@ -157,9 +165,11 @@ export class AIAgent {
       model,
       messages,
       tools: TOOL_DEFINITIONS,
-      temperature: 0.1,
-      max_tokens: 4096,
     };
+
+    // Note: We omit max_tokens, max_completion_tokens, and temperature
+    // to ensure maximum compatibility across standard and advanced (e.g., o1/gpt5) models.
+    // The APIs will use their safe defaults.
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

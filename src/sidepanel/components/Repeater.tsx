@@ -61,6 +61,22 @@ export default function Repeater({ initialRequest }: Props) {
     }
   }, [initialRequest]);
 
+  useEffect(() => {
+    const handleImportUrl = (e: Event) => {
+      const targetUrl = (e as CustomEvent).detail?.url || '';
+      if (targetUrl) {
+        setUrl(targetUrl);
+        setResponse(null);
+        setError(null);
+        setActiveTab('req_headers');
+      }
+    };
+    window.addEventListener('repeater-import-url', handleImportUrl);
+    return () => {
+      window.removeEventListener('repeater-import-url', handleImportUrl);
+    };
+  }, []);
+
   const handleSend = async () => {
     if (!url) return;
     setSending(true);

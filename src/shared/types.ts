@@ -26,6 +26,12 @@ export interface CapturedRequest {
 
   // Timing
   duration?: number; // ms
+
+  // Tagging
+  tag?: 'red' | 'yellow' | 'green' | 'none';
+
+  // Security Scan Results
+  vulnerabilities?: string[];
 }
 
 /** Message types for chrome.runtime messaging */
@@ -40,7 +46,10 @@ export type MessageType =
   | 'AI_TOOL_CALL'
   | 'GET_SETTINGS'
   | 'SAVE_SETTINGS'
-  | 'GET_PAGE_DOM';
+  | 'GET_PAGE_DOM'
+  | 'UPDATE_REQUEST_TAG'
+  | 'SET_REQUESTS'
+  | 'SWITCH_PROJECT';
 
 export interface ExtensionMessage {
   type: MessageType;
@@ -102,6 +111,21 @@ export interface ChatEntry {
   timestamp: number;
 }
 
+export interface CustomHeader {
+  id: string;
+  name: string;
+  value: string;
+  enabled: boolean;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  createdAt: number;
+  targetScope: string;
+  customHeaders: CustomHeader[];
+}
+
 /** Extension settings */
 export interface ExtensionSettings {
   ai: {
@@ -113,7 +137,11 @@ export interface ExtensionSettings {
   capture: {
     filterTypes: string[]; // 'xhr', 'fetch', 'document', 'script', 'stylesheet', 'image', 'font', 'other'
     enabled: boolean;
+    targetScope: string; // Keep as fallback/global
   };
+  customHeaders?: CustomHeader[]; // Keep as fallback
+  currentProjectId: string;
+  projects: Project[];
 }
 
 /** Default settings */
@@ -127,5 +155,17 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   capture: {
     filterTypes: ['xhr', 'fetch', 'document'],
     enabled: true,
+    targetScope: '',
   },
+  customHeaders: [],
+  currentProjectId: 'default',
+  projects: [
+    {
+      id: 'default',
+      name: 'Default Project',
+      createdAt: 1779065857634,
+      targetScope: '',
+      customHeaders: [],
+    }
+  ],
 };

@@ -8,7 +8,9 @@
     "storage",
     "activeTab",
     "scripting",
-    "webRequest"
+    "webRequest",
+    "unlimitedStorage",
+    "declarativeNetRequest"
   ],
   "host_permissions": ["<all_urls>"],
   "side_panel": {

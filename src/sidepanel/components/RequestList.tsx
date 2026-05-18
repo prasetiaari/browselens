@@ -31,10 +31,11 @@ function formatTime(timestamp: number): string {
 interface Props {
   requests: CapturedRequest[];
   selected: CapturedRequest | null;
+  selectedList?: CapturedRequest[];
   onSelect: (req: CapturedRequest) => void;
 }
 
-export default function RequestList({ requests, selected, onSelect }: Props) {
+export default function RequestList({ requests, selected, selectedList, onSelect }: Props) {
   if (requests.length === 0) {
     return (
       <div className="request-list-empty">
@@ -53,12 +54,17 @@ export default function RequestList({ requests, selected, onSelect }: Props) {
 
   return (
     <div className="request-list">
-      {requests.map(req => (
-        <div
-          key={req.id}
-          className={`request-item ${selected?.id === req.id ? 'selected' : ''}`}
-          onClick={() => onSelect(req)}
-        >
+      {requests.map(req => {
+        const idxInCompare = selectedList ? selectedList.findIndex(r => r.id === req.id) : -1;
+        const isSelected = selected?.id === req.id || idxInCompare >= 0;
+        const compareClass = idxInCompare === 0 ? 'compare-a' : idxInCompare === 1 ? 'compare-b' : '';
+        
+        return (
+          <div
+            key={req.id}
+            className={`request-item ${isSelected ? 'selected' : ''} ${compareClass} ${req.tag && req.tag !== 'none' ? 'tag-' + req.tag : ''}`}
+            onClick={() => onSelect(req)}
+          >
           <span className="request-time">
             {formatTime(req.timestamp)}
           </span>
@@ -66,6 +72,9 @@ export default function RequestList({ requests, selected, onSelect }: Props) {
             {req.method}
           </span>
           <span className="request-url" title={req.url}>
+            {req.vulnerabilities && req.vulnerabilities.length > 0 && (
+              <span style={{ marginRight: 4 }} title={`${req.vulnerabilities.length} security warnings detected`}>🚨</span>
+            )}
             {getPath(req.url)}
           </span>
           <span className={`request-status ${getStatusClass(req.status)}`}>
@@ -74,8 +83,9 @@ export default function RequestList({ requests, selected, onSelect }: Props) {
           <span className="request-duration">
             {formatDuration(req.duration)}
           </span>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

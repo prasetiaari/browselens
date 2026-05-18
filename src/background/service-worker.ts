@@ -12,38 +12,230 @@ import type {
 } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import { AIAgent } from '../shared/ai/agent';
+import { runPassiveScan } from '../shared/scanner';
 
 // ---- In-Memory State ----
 let capturedRequests: CapturedRequest[] = [];
 let chatHistory: ChatEntry[] = [];
 let settings: ExtensionSettings = { ...DEFAULT_SETTINGS };
 
-// ---- Initialize ----
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[BrowseLens] Extension installed');
-  loadSettings();
-});
+// ---- Load Settings & Requests ----
+function getActiveProject() {
+  const projId = settings.currentProjectId || 'default';
+  let activeProj = (settings.projects || []).find(p => p.id === projId);
+  if (!activeProj) {
+    activeProj = {
+      id: 'default',
+      name: 'Default Project',
+      createdAt: Date.now(),
+      targetScope: settings.capture.targetScope || '',
+      customHeaders: settings.customHeaders || [],
+    };
+  }
+  return activeProj;
+}
 
-chrome.runtime.onStartup.addListener(() => {
-  loadSettings();
-});
-
-// Open side panel on action click
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error: Error) => console.error('[BrowseLens] Side panel error:', error));
-
-// ---- Load Settings ----
 async function loadSettings() {
   try {
     const stored = await chrome.storage.local.get('settings');
     if (stored.settings) {
       settings = { ...DEFAULT_SETTINGS, ...stored.settings };
     }
+
+    let hasChanges = false;
+    // Auto-migration to dynamic projects on first launch
+    if (!settings.projects || settings.projects.length === 0) {
+      const legacyScope = settings.capture.targetScope || '';
+      const legacyHeaders = settings.customHeaders || [];
+
+      settings.projects = [
+        {
+          id: 'default',
+          name: 'Default Project',
+          createdAt: Date.now(),
+          targetScope: legacyScope,
+          customHeaders: legacyHeaders,
+        }
+      ];
+      settings.currentProjectId = 'default';
+      hasChanges = true;
+    }
+
+    if (hasChanges) {
+      await chrome.storage.local.set({ settings });
+    }
   } catch (err) {
     console.error('[BrowseLens] Failed to load settings:', err);
   }
 }
+
+async function loadRequests() {
+  try {
+    const projId = settings.currentProjectId || 'default';
+    const storageKey = `requests_${projId}`;
+    const stored = await chrome.storage.local.get(storageKey);
+
+    if (stored[storageKey]) {
+      capturedRequests = stored[storageKey] as CapturedRequest[];
+    } else {
+      // Migrate old global requests to requests_default
+      if (projId === 'default') {
+        const oldStored = await chrome.storage.local.get('capturedRequests');
+        if (oldStored.capturedRequests && Array.isArray(oldStored.capturedRequests) && oldStored.capturedRequests.length > 0) {
+          capturedRequests = oldStored.capturedRequests;
+          await chrome.storage.local.set({ [storageKey]: capturedRequests });
+          await chrome.storage.local.remove('capturedRequests');
+          console.log('[BrowseLens] Successfully migrated legacy requests to requests_default.');
+        } else {
+          capturedRequests = [];
+        }
+      } else {
+        capturedRequests = [];
+      }
+    }
+  } catch (err) {
+    console.error('[BrowseLens] Failed to load requests:', err);
+    capturedRequests = [];
+  }
+}
+
+async function saveRequests() {
+  try {
+    const projId = settings.currentProjectId || 'default';
+    const storageKey = `requests_${projId}`;
+    await chrome.storage.local.set({ [storageKey]: capturedRequests });
+  } catch (err) {
+    console.error('[BrowseLens] Failed to save requests:', err);
+  }
+}
+
+// ---- DeclarativeNetRequest Custom Headers ----
+async function updateHeaderRules() {
+  if (!chrome.declarativeNetRequest) return;
+
+  try {
+    // 1. Get all current dynamic rules
+    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const existingIds = existingRules.map(r => r.id);
+
+    // 2. Remove all existing rules
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: existingIds
+    });
+
+    // 3. Build new rules based on active project customHeaders
+    const activeProject = getActiveProject();
+    const headersToInject = (activeProject.customHeaders || []).filter(h => h.enabled && h.name.trim() !== '');
+    if (headersToInject.length === 0) {
+      console.log('[BrowseLens] No active custom headers to inject for project:', activeProject.name);
+      return;
+    }
+
+    const rules: chrome.declarativeNetRequest.Rule[] = [];
+    
+    // Check if we have dynamic scopes to target
+    let domains: string[] = [];
+    if (activeProject.targetScope && activeProject.targetScope.trim() !== '') {
+      domains = activeProject.targetScope
+        .split(',')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean);
+    }
+
+    // Build the requestHeaders array for declarativeNetRequest action
+    const requestHeadersOption = headersToInject.map(h => ({
+      header: h.name.trim(),
+      operation: 'set' as const,
+      value: h.value
+    }));
+
+    if (domains.length > 0) {
+      // Create separate rules for each domain in the scope
+      domains.forEach((domain, idx) => {
+        rules.push({
+          id: idx + 1,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders' as const,
+            requestHeaders: requestHeadersOption,
+          },
+          condition: {
+            urlFilter: `*://${domain}/*`,
+            resourceTypes: [
+              'main_frame' as const,
+              'sub_frame' as const,
+              'stylesheet' as const,
+              'script' as const,
+              'image' as const,
+              'font' as const,
+              'object' as const,
+              'xmlhttprequest' as const,
+              'ping' as const,
+              'csp_report' as const,
+              'media' as const,
+              'websocket' as const,
+              'other' as const
+            ]
+          }
+        });
+      });
+    } else {
+      // Global injection (all URLs)
+      rules.push({
+        id: 1,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders' as const,
+          requestHeaders: requestHeadersOption,
+        },
+        condition: {
+          urlFilter: '*',
+          resourceTypes: [
+            'main_frame' as const,
+            'sub_frame' as const,
+            'stylesheet' as const,
+            'script' as const,
+            'image' as const,
+            'font' as const,
+            'object' as const,
+            'xmlhttprequest' as const,
+            'ping' as const,
+            'csp_report' as const,
+            'media' as const,
+            'websocket' as const,
+            'other' as const
+          ]
+        }
+      });
+    }
+
+    if (rules.length > 0) {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        addRules: rules
+      });
+      console.log(`[BrowseLens] Successfully injected ${headersToInject.length} custom headers into declarative rules for project: ${activeProject.name}`);
+    }
+  } catch (err) {
+    console.error('[BrowseLens] Failed to update dynamic header injection rules:', err);
+  }
+}
+
+// ---- Initialize ----
+async function init() {
+  await loadSettings();
+  await loadRequests();
+  try {
+    await updateHeaderRules();
+  } catch (err) {
+    console.error('[BrowseLens] Failed to update header rules on init:', err);
+  }
+}
+init();
+
+// Open side panel on action click
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error: Error) => console.error('[BrowseLens] Side panel error:', error));
 
 // ---- Fallback WebRequest Capture ----
 // Tracks requests across multiple events to gather headers and body
@@ -149,6 +341,10 @@ async function handleMessage(
   switch (message.type) {
     case 'REQUEST_CAPTURED': {
       const request = message.payload as CapturedRequest;
+      if (!request || !request.url) {
+        sendResponse({ success: false, reason: 'invalid request payload' });
+        return;
+      }
       
       // Check filter settings
       if (!settings.capture.enabled) {
@@ -156,18 +352,49 @@ async function handleMessage(
         return;
       }
 
+      // Check Target Scope for active project
+      const activeProject = getActiveProject();
+      if (activeProject.targetScope && activeProject.targetScope.trim() !== '') {
+        const scopes = activeProject.targetScope.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        const reqUrl = (request.url || '').toLowerCase();
+        let inScope = false;
+        
+        for (const scope of scopes) {
+          if (reqUrl.includes(scope)) {
+            inScope = true;
+            break;
+          }
+        }
+        
+        if (!inScope) {
+           sendResponse({ success: false, reason: 'out of scope' });
+           return;
+        }
+      }
+
       // Deduplicate by ID
+      let mergedRequest = request;
       const existingIdx = capturedRequests.findIndex(r => r.id === request.id);
       if (existingIdx >= 0) {
         capturedRequests[existingIdx] = { ...capturedRequests[existingIdx], ...request };
+        mergedRequest = capturedRequests[existingIdx];
       } else {
         capturedRequests.push(request);
+      }
+
+      // Run passive scanner
+      try {
+        mergedRequest.vulnerabilities = runPassiveScan(mergedRequest);
+      } catch (err) {
+        console.error('[BrowseLens] Passive scan failed:', err);
       }
 
       // Keep max 1000 requests
       if (capturedRequests.length > 1000) {
         capturedRequests = capturedRequests.slice(-1000);
       }
+
+      saveRequests();
 
       // Notify side panel of new request
       chrome.runtime.sendMessage({
@@ -181,13 +408,37 @@ async function handleMessage(
       break;
     }
 
+    case 'UPDATE_REQUEST_TAG': {
+      const { id, tag } = message.payload as { id: string; tag: 'red' | 'yellow' | 'green' | 'none' };
+      const req = capturedRequests.find(r => r.id === id);
+      if (req) {
+        req.tag = tag;
+        saveRequests();
+        // Broadcast update to side panels
+        chrome.runtime.sendMessage({
+          type: 'REQUEST_CAPTURED',
+          payload: req,
+        }).catch(() => {});
+      }
+      sendResponse({ success: true });
+      break;
+    }
+
     case 'GET_REQUESTS': {
       sendResponse({ requests: capturedRequests });
       break;
     }
 
+    case 'SET_REQUESTS': {
+      capturedRequests = message.payload as CapturedRequest[];
+      saveRequests();
+      sendResponse({ success: true });
+      break;
+    }
+
     case 'CLEAR_REQUESTS': {
       capturedRequests = [];
+      saveRequests();
       sendResponse({ success: true });
       break;
     }
@@ -295,7 +546,32 @@ async function handleMessage(
     case 'SAVE_SETTINGS': {
       settings = message.payload as ExtensionSettings;
       await chrome.storage.local.set({ settings });
+      try {
+        await updateHeaderRules();
+      } catch (err) {
+        console.error('[BrowseLens] Failed to update header rules on save settings:', err);
+      }
       sendResponse({ success: true });
+      break;
+    }
+
+    case 'SWITCH_PROJECT': {
+      const { projectId } = message.payload as { projectId: string };
+      settings.currentProjectId = projectId;
+      await chrome.storage.local.set({ settings });
+      
+      // Load the new requests partition
+      await loadRequests();
+      
+      // Update header rules for the new active project settings
+      try {
+        await updateHeaderRules();
+      } catch (err) {
+        console.error('[BrowseLens] Failed to update header rules on switch project:', err);
+      }
+      
+      // Send back the newly loaded requests list
+      sendResponse({ success: true, requests: capturedRequests });
       break;
     }
 
