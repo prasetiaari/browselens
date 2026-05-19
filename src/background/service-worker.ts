@@ -76,14 +76,38 @@ async function loadRequests() {
     
     // 1. Get request IDs index
     const storedIndex = await chrome.storage.local.get(indexKey);
-    const index = (storedIndex[indexKey] || []) as string[];
+    let index = (storedIndex[indexKey] || []) as string[];
+    
+    // 2. Self-Healing: Reconstruct index if it's missing/empty but orphaned rows exist
+    if (index.length === 0) {
+      const allStored = await chrome.storage.local.get(null);
+      const prefix = `request_${projId}_`;
+      const orphanedRequests: CapturedRequest[] = [];
+      
+      Object.keys(allStored).forEach(key => {
+        if (key.startsWith(prefix)) {
+          const req = allStored[key] as CapturedRequest;
+          if (req && req.id) {
+            orphanedRequests.push(req);
+          }
+        }
+      });
+      
+      if (orphanedRequests.length > 0) {
+        // Sort chronologically by timestamp
+        orphanedRequests.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        index = orphanedRequests.map(r => r.id);
+        await chrome.storage.local.set({ [indexKey]: index });
+        console.log(`[BrowseLens] Self-Healed storage index for project: ${projId}. Reconstructed ${index.length} request pointers.`);
+      }
+    }
     
     if (index.length > 0) {
-      // 2. Fetch all request objects in a single batch query
+      // 3. Fetch all request objects in a single batch query
       const requestKeys = index.map(id => `request_${projId}_${id}`);
       const storedRequests = await chrome.storage.local.get(requestKeys);
       
-      // 3. Reconstruct in original order
+      // 4. Reconstruct in original order
       capturedRequests = index
         .map(id => storedRequests[`request_${projId}_${id}`])
         .filter(Boolean) as CapturedRequest[];
