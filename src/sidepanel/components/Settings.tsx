@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { ExtensionSettings, CustomHeader } from '../../shared/types';
 
 interface Props {
@@ -12,6 +12,28 @@ export default function Settings({ settings, onSave }: Props) {
     projects: settings.projects || [],
   });
   const [saved, setSaved] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+  const fetchDebugLogs = () => {
+    chrome.storage.local.get('debug_log', (res) => {
+      setDebugLogs((res.debug_log || []) as string[]);
+    });
+  };
+
+  const clearDebugLogs = () => {
+    chrome.storage.local.set({ debug_log: [] }, () => {
+      setDebugLogs([]);
+    });
+  };
+
+  useEffect(() => {
+    if (showDebug) {
+      fetchDebugLogs();
+      const interval = setInterval(fetchDebugLogs, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [showDebug]);
 
   const activeProjectId = local.currentProjectId || 'default';
   const activeProject = (local.projects || []).find((p) => p.id === activeProjectId) || {
@@ -219,6 +241,100 @@ export default function Settings({ settings, onSave }: Props) {
         Save Settings
       </button>
       {saved && <div className="settings-status">✓ Settings saved!</div>}
+
+      <div className="settings-section" style={{ marginTop: 24, borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+        <div 
+          onClick={() => setShowDebug(!showDebug)} 
+          style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            cursor: 'pointer',
+            userSelect: 'none'
+          }}
+        >
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            🩺 Background Debug Console {showDebug ? '👇' : '👉'}
+          </h3>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            {showDebug ? 'Hide Console' : 'Show Console'}
+          </span>
+        </div>
+
+        {showDebug && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <button 
+                onClick={fetchDebugLogs} 
+                style={{ 
+                  padding: '4px 8px', 
+                  fontSize: 10, 
+                  backgroundColor: 'var(--bg-secondary)', 
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  color: 'var(--text-primary)'
+                }}
+              >
+                🔄 Refresh
+              </button>
+              <button 
+                onClick={clearDebugLogs} 
+                style={{ 
+                  padding: '4px 8px', 
+                  fontSize: 10, 
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  color: 'rgb(239, 68, 68)'
+                }}
+              >
+                🗑️ Clear Logs
+              </button>
+            </div>
+            
+            <div 
+              style={{ 
+                backgroundColor: 'rgba(0, 0, 0, 0.3)', 
+                border: '1px solid var(--border-color)',
+                borderRadius: 6,
+                padding: 10,
+                maxHeight: 200,
+                overflowY: 'auto',
+                fontFamily: 'monospace',
+                fontSize: 9,
+                color: 'var(--text-secondary)',
+                lineHeight: 1.4,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all'
+              }}
+            >
+              {debugLogs.length === 0 ? (
+                <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>
+                  No diagnostic events recorded yet. Try capturing some traffic.
+                </div>
+              ) : (
+                debugLogs.slice().reverse().map((log, i) => {
+                  let color = 'var(--text-secondary)';
+                  if (log.includes('FAILED') || log.includes('rejected')) {
+                    color = '#ef4444'; // red
+                  } else if (log.includes('saveSingleRequest') || log.includes('loadRequests')) {
+                    color = '#10b981'; // green
+                  } else if (log.includes('REQUEST_CAPTURED')) {
+                    color = '#06b6d4'; // cyan
+                  }
+                  return (
+                    <div key={i} style={{ color, marginBottom: 4, borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: 2 }}>
+                      {log}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
