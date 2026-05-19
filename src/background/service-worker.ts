@@ -151,24 +151,8 @@ async function saveSingleRequest(req: CapturedRequest) {
     const requestKey = `request_${projId}_${req.id}`;
     const indexKey = `requests_index_${projId}`;
     
-    // Get current index of request IDs
-    const storedIndex = await chrome.storage.local.get(indexKey);
-    let index = (storedIndex[indexKey] || []) as string[];
-    
-    // Update index (deduplicate)
-    if (!index.includes(req.id)) {
-      index.push(req.id);
-      
-      // Limit index size to max 1000
-      if (index.length > 1000) {
-        const removedIds = index.slice(0, index.length - 1000);
-        index = index.slice(-1000);
-        
-        // Delete old single rows in parallel
-        const keysToDelete = removedIds.map(id => `request_${projId}_${id}`);
-        await chrome.storage.local.remove(keysToDelete);
-      }
-    }
+    // Generate index synchronously from memory (guarantees race-condition free, instant execution!)
+    const index = capturedRequests.map(r => r.id);
     
     // Save index and request object in parallel
     await chrome.storage.local.set({
@@ -529,7 +513,13 @@ async function handleMessage(
 
       // Keep max 1000 requests
       if (capturedRequests.length > 1000) {
+        const projId = settings.currentProjectId || 'default';
+        const removed = capturedRequests.slice(0, capturedRequests.length - 1000);
         capturedRequests = capturedRequests.slice(-1000);
+        
+        // Clean up old rows from storage in background
+        const keysToDelete = removed.map(r => `request_${projId}_${r.id}`);
+        chrome.storage.local.remove(keysToDelete).catch(() => {});
       }
 
       await saveSingleRequest(mergedRequest);
@@ -657,7 +647,12 @@ async function handleMessage(
 
         capturedRequests.push(replayedRequest);
         if (capturedRequests.length > 1000) {
+          const projId = settings.currentProjectId || 'default';
+          const removed = capturedRequests.slice(0, capturedRequests.length - 1000);
           capturedRequests = capturedRequests.slice(-1000);
+          
+          const keysToDelete = removed.map(r => `request_${projId}_${r.id}`);
+          chrome.storage.local.remove(keysToDelete).catch(() => {});
         }
         await saveSingleRequest(replayedRequest);
 
