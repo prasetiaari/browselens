@@ -11,7 +11,7 @@ window.addEventListener('message', (event) => {
   if (event.data.source === 'browselens-content' && event.data.payload) {
     try {
       chrome.runtime.sendMessage({
-        type: 'REQUEST_CAPTURED',
+        type: 'DEVTOOLS_REQUEST_CAPTURED',
         payload: event.data.payload
       }).catch(() => {
         // Ignore disconnected context errors

@@ -444,6 +444,7 @@ async function handleMessage(
 ) {
   await ensureInit();
   switch (message.type) {
+    case 'DEVTOOLS_REQUEST_CAPTURED':
     case 'REQUEST_CAPTURED': {
       const request = message.payload as CapturedRequest;
       await logDebug(`REQUEST_CAPTURED received - id: ${request.id}, url: ${request.url ? request.url.substring(0, 60) : 'none'}`);

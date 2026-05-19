@@ -59,7 +59,7 @@ chrome.devtools.network.onRequestFinished.addListener(
 
       // Send to service worker
       chrome.runtime.sendMessage({
-        type: 'REQUEST_CAPTURED',
+        type: 'DEVTOOLS_REQUEST_CAPTURED',
         payload: capturedRequest,
       }).catch((err: Error) => {
         console.error('[BrowseLens DevTools] Failed to send request:', err);

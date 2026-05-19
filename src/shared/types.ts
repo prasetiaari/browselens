@@ -37,6 +37,7 @@ export interface CapturedRequest {
 /** Message types for chrome.runtime messaging */
 export type MessageType =
   | 'REQUEST_CAPTURED'
+  | 'DEVTOOLS_REQUEST_CAPTURED'
   | 'GET_REQUESTS'
   | 'CLEAR_REQUESTS'
   | 'REPLAY_REQUEST'
