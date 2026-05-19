@@ -72,25 +72,47 @@ async function loadSettings() {
 async function loadRequests() {
   try {
     const projId = settings.currentProjectId || 'default';
-    const storageKey = `requests_${projId}`;
-    const stored = await chrome.storage.local.get(storageKey);
-
-    if (stored[storageKey]) {
-      capturedRequests = stored[storageKey] as CapturedRequest[];
+    const indexKey = `requests_index_${projId}`;
+    
+    // 1. Get request IDs index
+    const storedIndex = await chrome.storage.local.get(indexKey);
+    const index = (storedIndex[indexKey] || []) as string[];
+    
+    if (index.length > 0) {
+      // 2. Fetch all request objects in a single batch query
+      const requestKeys = index.map(id => `request_${projId}_${id}`);
+      const storedRequests = await chrome.storage.local.get(requestKeys);
+      
+      // 3. Reconstruct in original order
+      capturedRequests = index
+        .map(id => storedRequests[`request_${projId}_${id}`])
+        .filter(Boolean) as CapturedRequest[];
     } else {
-      // Migrate old global requests to requests_default
-      if (projId === 'default') {
-        const oldStored = await chrome.storage.local.get('capturedRequests');
-        if (oldStored.capturedRequests && Array.isArray(oldStored.capturedRequests) && oldStored.capturedRequests.length > 0) {
-          capturedRequests = oldStored.capturedRequests;
-          await chrome.storage.local.set({ [storageKey]: capturedRequests });
-          await chrome.storage.local.remove('capturedRequests');
-          console.log('[BrowseLens] Successfully migrated legacy requests to requests_default.');
+      // Fallback: check if legacy full-array key exists for this project
+      const legacyKey = `requests_${projId}`;
+      const storedLegacy = await chrome.storage.local.get(legacyKey);
+      if (storedLegacy[legacyKey] && Array.isArray(storedLegacy[legacyKey])) {
+        capturedRequests = storedLegacy[legacyKey];
+        // Migrate to new row structure
+        await saveRequests();
+        // Clean up legacy key
+        await chrome.storage.local.remove(legacyKey);
+        console.log(`[BrowseLens] Successfully migrated legacy requests partition to key-value row structure for project: ${projId}`);
+      } else {
+        // Migrate old global requests to requests_default
+        if (projId === 'default') {
+          const oldStored = await chrome.storage.local.get('capturedRequests');
+          if (oldStored.capturedRequests && Array.isArray(oldStored.capturedRequests) && oldStored.capturedRequests.length > 0) {
+            capturedRequests = oldStored.capturedRequests;
+            await saveRequests();
+            await chrome.storage.local.remove('capturedRequests');
+            console.log('[BrowseLens] Successfully migrated legacy requests to row-based requests_default.');
+          } else {
+            capturedRequests = [];
+          }
         } else {
           capturedRequests = [];
         }
-      } else {
-        capturedRequests = [];
       }
     }
   } catch (err) {
@@ -99,11 +121,57 @@ async function loadRequests() {
   }
 }
 
+async function saveSingleRequest(req: CapturedRequest) {
+  try {
+    const projId = settings.currentProjectId || 'default';
+    const requestKey = `request_${projId}_${req.id}`;
+    const indexKey = `requests_index_${projId}`;
+    
+    // Get current index of request IDs
+    const storedIndex = await chrome.storage.local.get(indexKey);
+    let index = (storedIndex[indexKey] || []) as string[];
+    
+    // Update index (deduplicate)
+    if (!index.includes(req.id)) {
+      index.push(req.id);
+      
+      // Limit index size to max 1000
+      if (index.length > 1000) {
+        const removedIds = index.slice(0, index.length - 1000);
+        index = index.slice(-1000);
+        
+        // Delete old single rows in parallel
+        const keysToDelete = removedIds.map(id => `request_${projId}_${id}`);
+        await chrome.storage.local.remove(keysToDelete);
+      }
+    }
+    
+    // Save index and request object in parallel
+    await chrome.storage.local.set({
+      [indexKey]: index,
+      [requestKey]: req
+    });
+  } catch (err) {
+    console.error('[BrowseLens] Failed to save single request:', err);
+  }
+}
+
 async function saveRequests() {
   try {
     const projId = settings.currentProjectId || 'default';
-    const storageKey = `requests_${projId}`;
-    await chrome.storage.local.set({ [storageKey]: capturedRequests });
+    const indexKey = `requests_index_${projId}`;
+    const index = capturedRequests.map(r => r.id);
+    
+    const payload: Record<string, any> = {
+      [indexKey]: index
+    };
+    
+    // Batch payload rows
+    capturedRequests.forEach(req => {
+      payload[`request_${projId}_${req.id}`] = req;
+    });
+    
+    await chrome.storage.local.set(payload);
   } catch (err) {
     console.error('[BrowseLens] Failed to save requests:', err);
   }
@@ -440,7 +508,7 @@ async function handleMessage(
         capturedRequests = capturedRequests.slice(-1000);
       }
 
-      await saveRequests();
+      await saveSingleRequest(mergedRequest);
 
       // Notify side panel of new request
       chrome.runtime.sendMessage({
@@ -459,7 +527,7 @@ async function handleMessage(
       const req = capturedRequests.find(r => r.id === id);
       if (req) {
         req.tag = tag;
-        await saveRequests();
+        await saveSingleRequest(req);
         // Broadcast update to side panels
         chrome.runtime.sendMessage({
           type: 'REQUEST_CAPTURED',
@@ -483,8 +551,16 @@ async function handleMessage(
     }
 
     case 'CLEAR_REQUESTS': {
+      const projId = settings.currentProjectId || 'default';
+      const indexKey = `requests_index_${projId}`;
+      const storedIndex = await chrome.storage.local.get(indexKey);
+      const index = (storedIndex[indexKey] || []) as string[];
+      
+      const keysToDelete = index.map(id => `request_${projId}_${id}`);
+      keysToDelete.push(indexKey);
+      
+      await chrome.storage.local.remove(keysToDelete);
       capturedRequests = [];
-      await saveRequests();
       sendResponse({ success: true });
       break;
     }
@@ -559,7 +635,7 @@ async function handleMessage(
         if (capturedRequests.length > 1000) {
           capturedRequests = capturedRequests.slice(-1000);
         }
-        await saveRequests();
+        await saveSingleRequest(replayedRequest);
 
         // Broadcast to all open side panels so they update dynamically in real time
         chrome.runtime.sendMessage({
