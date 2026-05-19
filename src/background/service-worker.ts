@@ -84,12 +84,12 @@ async function loadRequests() {
   try {
     const projId = settings.currentProjectId || 'default';
     const indexKey = `requests_index_${projId}`;
-    await logDebug(`loadRequests called - projId: ${projId}`);
+    logDebug(`loadRequests called - projId: ${projId}`);
     
     // 1. Get request IDs index
     const storedIndex = await chrome.storage.local.get(indexKey);
     let index = (storedIndex[indexKey] || []) as string[];
-    await logDebug(`loadRequests - retrieved index length: ${index.length}`);
+    logDebug(`loadRequests - retrieved index length: ${index.length}`);
     
     // 2. Self-Healing: Reconstruct index if it's missing/empty but orphaned rows exist
     if (index.length === 0) {
@@ -111,7 +111,7 @@ async function loadRequests() {
         orphanedRequests.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         index = orphanedRequests.map(r => r.id);
         await chrome.storage.local.set({ [indexKey]: index });
-        await logDebug(`loadRequests - self-healed index length: ${index.length}`);
+        logDebug(`loadRequests - self-healed index length: ${index.length}`);
       }
     }
     
@@ -124,7 +124,7 @@ async function loadRequests() {
       capturedRequests = index
         .map(id => storedRequests[`request_${projId}_${id}`])
         .filter(Boolean) as CapturedRequest[];
-      await logDebug(`loadRequests - reconstructed capturedRequests length: ${capturedRequests.length}`);
+      logDebug(`loadRequests - reconstructed capturedRequests length: ${capturedRequests.length}`);
     } else {
       // Fallback: check if legacy full-array key exists for this project
       const legacyKey = `requests_${projId}`;
@@ -135,7 +135,7 @@ async function loadRequests() {
         await saveRequests();
         // Clean up legacy key
         await chrome.storage.local.remove(legacyKey);
-        await logDebug(`loadRequests - migrated legacy array, length: ${capturedRequests.length}`);
+        logDebug(`loadRequests - migrated legacy array, length: ${capturedRequests.length}`);
       } else {
         // Migrate old global requests to requests_default
         if (projId === 'default') {
@@ -144,7 +144,7 @@ async function loadRequests() {
             capturedRequests = oldStored.capturedRequests;
             await saveRequests();
             await chrome.storage.local.remove('capturedRequests');
-            await logDebug(`loadRequests - migrated old global requests, length: ${capturedRequests.length}`);
+            logDebug(`loadRequests - migrated old global requests, length: ${capturedRequests.length}`);
           } else {
             capturedRequests = [];
           }
@@ -155,7 +155,7 @@ async function loadRequests() {
     }
   } catch (err) {
     console.error('[BrowseLens] Failed to load requests:', err);
-    await logDebug(`loadRequests FAILED: ${err}`);
+    logDebug(`loadRequests FAILED: ${err}`);
     capturedRequests = [];
   }
 }
@@ -168,7 +168,7 @@ async function saveSingleRequest(req: CapturedRequest) {
     
     // Generate index synchronously from memory (guarantees race-condition free, instant execution!)
     const index = capturedRequests.map(r => r.id);
-    await logDebug(`saveSingleRequest - projId: ${projId}, reqId: ${req.id}, memory index size: ${index.length}`);
+    logDebug(`saveSingleRequest - projId: ${projId}, reqId: ${req.id}, memory index size: ${index.length}`);
     
     // Save index and request object in parallel
     await chrome.storage.local.set({
@@ -179,10 +179,10 @@ async function saveSingleRequest(req: CapturedRequest) {
     // Double check write
     const checkIndex = await chrome.storage.local.get(indexKey);
     const checkLen = ((checkIndex[indexKey] || []) as string[]).length;
-    await logDebug(`saveSingleRequest - write complete. Verified storage index size: ${checkLen}`);
+    logDebug(`saveSingleRequest - write complete. Verified storage index size: ${checkLen}`);
   } catch (err) {
     console.error('[BrowseLens] Failed to save single request:', err);
-    await logDebug(`saveSingleRequest FAILED: ${err}`);
+    logDebug(`saveSingleRequest FAILED: ${err}`);
   }
 }
 
@@ -447,7 +447,7 @@ async function handleMessage(
     case 'DEVTOOLS_REQUEST_CAPTURED':
     case 'REQUEST_CAPTURED': {
       const request = message.payload as CapturedRequest;
-      await logDebug(`REQUEST_CAPTURED received - id: ${request.id}, url: ${request.url ? request.url.substring(0, 60) : 'none'}`);
+      logDebug(`REQUEST_CAPTURED received - id: ${request.id}, url: ${request.url ? request.url.substring(0, 60) : 'none'}`);
       if (!request || !request.url) {
         sendResponse({ success: false, reason: 'invalid request payload' });
         return;
@@ -494,7 +494,7 @@ async function handleMessage(
       
       // Check filter settings
       if (!settings.capture.enabled) {
-        await logDebug(`REQUEST_CAPTURED rejected - capture disabled`);
+        logDebug(`REQUEST_CAPTURED rejected - capture disabled`);
         sendResponse({ success: false, reason: 'capture disabled' });
         return;
       }
@@ -514,7 +514,7 @@ async function handleMessage(
         }
         
         if (!inScope) {
-           await logDebug(`REQUEST_CAPTURED rejected - out of scope: ${reqUrl}`);
+           logDebug(`REQUEST_CAPTURED rejected - out of scope: ${reqUrl}`);
            sendResponse({ success: false, reason: 'out of scope' });
            return;
         }
