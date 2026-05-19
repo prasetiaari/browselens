@@ -55,19 +55,10 @@ export default function App() {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
       if (response?.settings) {
         setSettings(response.settings);
-        // Initialize requests matching the current active project partition
-        chrome.runtime.sendMessage({ 
-          type: 'SWITCH_PROJECT', 
-          payload: { projectId: response.settings.currentProjectId || 'default' } 
-        }, (res) => {
-          if (res?.requests) setRequests(res.requests);
-        });
-      } else {
-        // Fallback to old behavior if settings aren't stored
-        chrome.runtime.sendMessage({ type: 'GET_REQUESTS' }, (res) => {
-          if (res?.requests) setRequests(res.requests);
-        });
       }
+      chrome.runtime.sendMessage({ type: 'GET_REQUESTS' }, (res) => {
+        if (res?.requests) setRequests(res.requests);
+      });
     });
   }, []);
 

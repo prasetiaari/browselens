@@ -401,7 +401,7 @@ async function handleMessage(
         capturedRequests = capturedRequests.slice(-1000);
       }
 
-      saveRequests();
+      await saveRequests();
 
       // Notify side panel of new request
       chrome.runtime.sendMessage({
@@ -420,7 +420,7 @@ async function handleMessage(
       const req = capturedRequests.find(r => r.id === id);
       if (req) {
         req.tag = tag;
-        saveRequests();
+        await saveRequests();
         // Broadcast update to side panels
         chrome.runtime.sendMessage({
           type: 'REQUEST_CAPTURED',
@@ -438,14 +438,14 @@ async function handleMessage(
 
     case 'SET_REQUESTS': {
       capturedRequests = message.payload as CapturedRequest[];
-      saveRequests();
+      await saveRequests();
       sendResponse({ success: true });
       break;
     }
 
     case 'CLEAR_REQUESTS': {
       capturedRequests = [];
-      saveRequests();
+      await saveRequests();
       sendResponse({ success: true });
       break;
     }
@@ -509,7 +509,7 @@ async function handleMessage(
         if (capturedRequests.length > 1000) {
           capturedRequests = capturedRequests.slice(-1000);
         }
-        saveRequests();
+        await saveRequests();
 
         // Broadcast to all open side panels so they update dynamically in real time
         chrome.runtime.sendMessage({
@@ -602,11 +602,15 @@ async function handleMessage(
 
     case 'SWITCH_PROJECT': {
       const { projectId } = message.payload as { projectId: string };
+      const isProjectChanged = settings.currentProjectId !== projectId;
+      
       settings.currentProjectId = projectId;
       await chrome.storage.local.set({ settings });
       
-      // Load the new requests partition
-      await loadRequests();
+      // Load the new requests partition only if the project actually changed
+      if (isProjectChanged || capturedRequests.length === 0) {
+        await loadRequests();
+      }
       
       // Update header rules for the new active project settings
       try {
