@@ -352,6 +352,45 @@ async function handleMessage(
         sendResponse({ success: false, reason: 'invalid request payload' });
         return;
       }
+
+      // 1. Optimize stored payloads by discarding response bodies for heavy/non-essential MIME types
+      const mime = (request.mimeType || '').toLowerCase();
+      const url = (request.url || '').toLowerCase();
+      
+      const isHeavyAsset = 
+        mime.startsWith('image/') || 
+        mime.startsWith('video/') || 
+        mime.startsWith('audio/') || 
+        mime.startsWith('font/') ||
+        mime.includes('javascript') || 
+        mime.includes('css') ||
+        url.endsWith('.png') || 
+        url.endsWith('.jpg') || 
+        url.endsWith('.jpeg') || 
+        url.endsWith('.gif') || 
+        url.endsWith('.webp') || 
+        url.endsWith('.svg') || 
+        url.endsWith('.css') || 
+        url.endsWith('.js') || 
+        url.endsWith('.woff') || 
+        url.endsWith('.woff2') || 
+        url.endsWith('.ttf');
+
+      if (isHeavyAsset && request.responseBody) {
+        request.responseBody = `[Response body discarded for static assets: ${mime || 'asset'}]`;
+        request.responseBodySize = 0;
+      }
+
+      // 2. Limit the stored response/request body size to max 150 KB to prevent Chrome storage serialization failures
+      const MAX_BODY_SIZE = 150 * 1024; // 150 KB
+      if (request.responseBody && request.responseBody.length > MAX_BODY_SIZE) {
+        request.responseBody = request.responseBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Response Body Truncated (Exceeds 150KB Limit) ...]';
+        request.responseBodySize = request.responseBody.length;
+      }
+      if (request.requestBody && request.requestBody.length > MAX_BODY_SIZE) {
+        request.requestBody = request.requestBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Request Body Truncated (Exceeds 150KB Limit) ...]';
+        request.requestBodySize = request.requestBody.length;
+      }
       
       // Check filter settings
       if (!settings.capture.enabled) {
@@ -503,6 +542,17 @@ async function handleMessage(
           replayedRequest.vulnerabilities = runPassiveScan(replayedRequest);
         } catch (scanErr) {
           console.error('[BrowseLens] Passive scan failed for replayed request:', scanErr);
+        }
+
+        // Limit manual replayed request/response size to prevent storage failures
+        const MAX_BODY_SIZE = 150 * 1024; // 150 KB
+        if (replayedRequest.responseBody && replayedRequest.responseBody.length > MAX_BODY_SIZE) {
+          replayedRequest.responseBody = replayedRequest.responseBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Response Body Truncated (Exceeds 150KB Limit) ...]';
+          replayedRequest.responseBodySize = replayedRequest.responseBody.length;
+        }
+        if (replayedRequest.requestBody && replayedRequest.requestBody.length > MAX_BODY_SIZE) {
+          replayedRequest.requestBody = replayedRequest.requestBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Request Body Truncated (Exceeds 150KB Limit) ...]';
+          replayedRequest.requestBodySize = replayedRequest.requestBody.length;
         }
 
         capturedRequests.push(replayedRequest);
