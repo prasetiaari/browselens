@@ -39,8 +39,16 @@ async function loadSettings() {
   try {
     const stored = await chrome.storage.local.get('settings');
     if (stored.settings) {
-      settings = { ...DEFAULT_SETTINGS, ...stored.settings };
+      const s = stored.settings as ExtensionSettings;
+      // Deep merge to prevent nested objects (capture, ai) from being wiped out
+      settings = {
+        ...DEFAULT_SETTINGS,
+        ...s,
+        capture: { ...DEFAULT_SETTINGS.capture, ...(s.capture || {}) },
+        ai: { ...DEFAULT_SETTINGS.ai, ...(s.ai || {}) },
+      };
     }
+    console.log('[BrowseLens] loadSettings complete. capture.enabled=', settings.capture.enabled, 'projectId=', settings.currentProjectId);
 
     let hasChanges = false;
     // Auto-migration to dynamic projects on first launch
@@ -493,14 +501,17 @@ async function handleMessage(
       }
       
       // Check filter settings
+      console.log('[BrowseLens] REQUEST_CAPTURED handler: capture.enabled=', settings.capture?.enabled, 'url=', request.url?.substring(0, 80));
       if (!settings.capture.enabled) {
         logDebug(`REQUEST_CAPTURED rejected - capture disabled`);
+        console.warn('[BrowseLens] REJECTED - capture disabled');
         sendResponse({ success: false, reason: 'capture disabled' });
         return;
       }
 
       // Check Target Scope for active project
       const activeProject = getActiveProject();
+      console.log('[BrowseLens] activeProject.targetScope=', JSON.stringify(activeProject.targetScope));
       if (activeProject.targetScope && activeProject.targetScope.trim() !== '') {
         const scopes = activeProject.targetScope.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
         const reqUrl = (request.url || '').toLowerCase();
@@ -515,6 +526,7 @@ async function handleMessage(
         
         if (!inScope) {
            logDebug(`REQUEST_CAPTURED rejected - out of scope: ${reqUrl}`);
+           console.warn('[BrowseLens] REJECTED out of scope. scopes=', scopes, 'url=', reqUrl);
            sendResponse({ success: false, reason: 'out of scope' });
            return;
         }
