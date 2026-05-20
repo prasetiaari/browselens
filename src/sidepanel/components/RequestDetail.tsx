@@ -278,6 +278,25 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             </button>
           </div>
         </div>
+        
+        <div style={{ 
+          marginTop: 8,
+          marginBottom: 8, 
+          fontSize: 12, 
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--accent-cyan)', 
+          wordBreak: 'break-all',
+          lineHeight: 1.45,
+          background: 'rgba(0, 229, 255, 0.04)',
+          border: '1px solid rgba(0, 229, 255, 0.12)',
+          padding: '8px 12px',
+          borderRadius: 'var(--radius-sm)',
+          userSelect: 'all',
+          fontWeight: 500
+        }} title="Target URL (Double-click to select all)">
+          {request.url}
+        </div>
+
         <div className="detail-tabs">
           <button
             className={`detail-tab ${activeTab === 'headers' ? 'active' : ''}`}
@@ -573,22 +592,6 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               </button>
             )}
 
-            <div style={{ 
-              marginBottom: 12, 
-              fontSize: 13, 
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--accent-cyan)', 
-              wordBreak: 'break-all',
-              lineHeight: 1.45,
-              background: 'rgba(0, 229, 255, 0.05)',
-              border: '1px solid rgba(0, 229, 255, 0.15)',
-              padding: '8px 12px',
-              borderRadius: 'var(--radius-sm)',
-              userSelect: 'all',
-              fontWeight: 500
-            }}>
-              {request.url}
-            </div>
             
             {request.vulnerabilities && request.vulnerabilities.length > 0 && (
               <div style={{
