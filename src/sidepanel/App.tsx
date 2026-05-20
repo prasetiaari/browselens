@@ -547,34 +547,53 @@ export default function App() {
           <button
             className={`tab-btn ${activeMainTab === 'network' ? 'active' : ''}`}
             onClick={() => setActiveMainTab('network')}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-            </svg>
+            <img 
+              src={chrome.runtime.getURL('icons/ui/network.svg')} 
+              alt="Network" 
+              style={{ 
+                width: 14, 
+                height: 14, 
+                filter: activeMainTab === 'network' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+                transition: 'all 0.2s ease' 
+              }} 
+            />
             Network
             {requests.length > 0 && <span className="tab-badge">{requests.length}</span>}
           </button>
           <button
             className={`tab-btn ${activeMainTab === 'chat' ? 'active' : ''}`}
             onClick={() => setActiveMainTab('chat')}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-              <line x1="12" y1="22.08" x2="12" y2="12" />
-            </svg>
+            <img 
+              src={chrome.runtime.getURL('icons/ui/chat.svg')} 
+              alt="AI Chat" 
+              style={{ 
+                width: 14, 
+                height: 14, 
+                filter: activeMainTab === 'chat' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+                transition: 'all 0.2s ease' 
+              }} 
+            />
             AI Chat
           </button>
           <button
             className={`tab-btn ${activeMainTab === 'tools' ? 'active' : ''}`}
             onClick={() => setActiveMainTab('tools')}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="7" height="9" />
-              <rect x="14" y="3" width="7" height="5" />
-              <rect x="14" y="12" width="7" height="9" />
-              <rect x="3" y="16" width="7" height="5" />
-            </svg>
+            <img 
+              src={chrome.runtime.getURL('icons/ui/tools.svg')} 
+              alt="Tools" 
+              style={{ 
+                width: 14, 
+                height: 14, 
+                filter: activeMainTab === 'tools' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+                transition: 'all 0.2s ease' 
+              }} 
+            />
             Tools
           </button>
         </div>

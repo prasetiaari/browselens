@@ -722,81 +722,24 @@ ${formInputs}
 
   // Render modern, premium, glowing cyber-security SVGs for all tools instead of basic emojis
   const renderToolIcon = (id: string, isHovered: boolean, size: number = 34) => {
-    const strokeColor = isHovered ? 'var(--accent-cyan)' : 'var(--text-secondary)';
-    const glowStyle = isHovered ? { filter: 'drop-shadow(0 0 5px rgba(0, 229, 255, 0.75))' } : {};
+    const glowStyle = isHovered 
+      ? { filter: 'drop-shadow(0 0 5px rgba(0, 229, 255, 0.75))', transition: 'all 0.25s ease-in-out' } 
+      : { opacity: 0.75, transition: 'all 0.25s ease-in-out' };
 
-    switch (id) {
-      case 'base64':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <path d="M17 3h4v4M3 21L21 3M21 17v4h-4M3 3l5 5M13 13l8 8" />
-          </svg>
-        );
-      case 'jwt':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            <path d="M9 11h6M9 15h4" />
-          </svg>
-        );
-      case 'encoder':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <polyline points="16 18 22 12 16 6" />
-            <polyline points="8 6 2 12 8 18" />
-            <line x1="12" y1="2" x2="12" y2="22" />
-          </svg>
-        );
-      case 'csrf':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <line x1="9" y1="9" x2="15" y2="9" />
-            <line x1="9" y1="13" x2="15" y2="13" />
-            <line x1="9" y1="17" x2="13" y2="17" />
-          </svg>
-        );
-      case 'urlparser':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="2" y1="12" x2="22" y2="12" />
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-          </svg>
-        );
-      case 'crypto':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        );
-      case 'highlighter':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <circle cx="12" cy="12" r="10" />
-            <circle cx="12" cy="12" r="6" />
-            <circle cx="12" cy="12" r="2" />
-          </svg>
-        );
-      case 'graphql':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-          </svg>
-        );
-      case 'jsauditor':
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
-            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-            <polyline points="14 2 14 8 20 8" />
-            <circle cx="10" cy="15" r="3" />
-            <line x1="12" y1="17" x2="16" y2="21" />
-          </svg>
-        );
-      default:
-        return null;
-    }
+    const iconUrl = chrome.runtime.getURL(`icons/tools/${id}.svg`);
+
+    return (
+      <img 
+        src={iconUrl} 
+        alt={`${id} tool icon`} 
+        style={{ 
+          width: size, 
+          height: size, 
+          display: 'block', 
+          ...glowStyle 
+        }} 
+      />
+    );
   };
 
   // List of all tools for rendering the gorgeous home grid dashboard

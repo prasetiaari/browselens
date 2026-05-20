@@ -269,10 +269,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               }}
               title="Delete request"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
+              <img 
+                src={chrome.runtime.getURL('icons/ui/delete.svg')} 
+                alt="Delete" 
+                style={{ width: 11, height: 11 }} 
+              />
               Delete
             </button>
           </div>
@@ -315,11 +316,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             <option value="fetch">Copy as Fetch</option>
           </select>
           <button className="detail-action-btn" onClick={() => onSendToRepeater(request)} style={{ display: 'flex', alignItems: 'center' }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            </svg>
+            <img 
+              src={chrome.runtime.getURL('icons/ui/repeater.svg')} 
+              alt="Send to Repeater" 
+              style={{ width: 12, height: 12, marginRight: 4 }} 
+            />
             Send to Repeater
           </button>
           <button
@@ -328,9 +329,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             title="AI: Explain Request"
             style={{ display: 'flex', alignItems: 'center' }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-            </svg>
+            <img 
+              src={chrome.runtime.getURL('icons/ui/explain.svg')} 
+              alt="Explain" 
+              style={{ width: 12, height: 12, marginRight: 4 }} 
+            />
             AI Explain
           </button>
           <button
@@ -339,9 +342,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             title="AI: Security Audit"
             style={{ display: 'flex', alignItems: 'center' }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
+            <img 
+              src={chrome.runtime.getURL('icons/ui/audit.svg')} 
+              alt="Audit" 
+              style={{ width: 12, height: 12, marginRight: 4 }} 
+            />
             AI Audit
           </button>
           <button className="icon-btn" onClick={onClose} title="Close">
@@ -485,10 +490,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-yellow)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-sans)', letterSpacing: '0.5px' }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                      <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    </svg>
+                    <img 
+                      src={chrome.runtime.getURL('icons/ui/notes.svg')} 
+                      alt="Notes" 
+                      style={{ width: 12, height: 12 }} 
+                    />
                     Researcher Notes
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -558,10 +564,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                 className="add-notes-dashed-btn"
                 title="Add security or pentesting notes to this request"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                </svg>
+                <img 
+                  src={chrome.runtime.getURL('icons/ui/notes.svg')} 
+                  alt="Notes" 
+                  style={{ width: 12, height: 12, marginRight: 6 }} 
+                />
                 <span>Add Researcher Notes...</span>
               </button>
             )}
