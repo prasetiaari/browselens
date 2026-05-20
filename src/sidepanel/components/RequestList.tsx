@@ -33,9 +33,11 @@ interface Props {
   selected: CapturedRequest | null;
   selectedList?: CapturedRequest[];
   onSelect: (req: CapturedRequest) => void;
+  selectMode?: boolean;
+  selectedIds?: string[];
 }
 
-export default function RequestList({ requests, selected, selectedList, onSelect }: Props) {
+export default function RequestList({ requests, selected, selectedList, onSelect, selectMode = false, selectedIds = [] }: Props) {
   if (requests.length === 0) {
     return (
       <div className="request-list-empty">
@@ -56,7 +58,7 @@ export default function RequestList({ requests, selected, selectedList, onSelect
     <div className="request-list">
       {requests.map(req => {
         const idxInCompare = selectedList ? selectedList.findIndex(r => r.id === req.id) : -1;
-        const isSelected = selected?.id === req.id || idxInCompare >= 0;
+        const isSelected = (selectMode && selectedIds.includes(req.id)) || (!selectMode && selected?.id === req.id) || idxInCompare >= 0;
         const compareClass = idxInCompare === 0 ? 'compare-a' : idxInCompare === 1 ? 'compare-b' : '';
         
         return (
@@ -64,8 +66,23 @@ export default function RequestList({ requests, selected, selectedList, onSelect
             key={req.id}
             className={`request-item ${isSelected ? 'selected' : ''} ${compareClass} ${req.tag && req.tag !== 'none' ? 'tag-' + req.tag : ''}`}
             onClick={() => onSelect(req)}
+            style={{ display: 'flex', alignItems: 'center' }}
           >
-          <span className="request-time">
+            {selectMode && (
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(req.id)}
+                onChange={() => {}}
+                style={{
+                  marginRight: 8,
+                  marginLeft: 4,
+                  cursor: 'pointer',
+                  accentColor: 'var(--accent-cyan)',
+                  flexShrink: 0
+                }}
+              />
+            )}
+            <span className="request-time">
             {formatTime(req.timestamp)}
           </span>
           <span className={`request-method ${req.method}`}>
@@ -74,6 +91,9 @@ export default function RequestList({ requests, selected, selectedList, onSelect
           <span className="request-url" title={req.url}>
             {req.vulnerabilities && req.vulnerabilities.length > 0 && (
               <span style={{ marginRight: 4 }} title={`${req.vulnerabilities.length} security warnings detected`}>🚨</span>
+            )}
+            {req.notes && req.notes.trim() !== '' && (
+              <span style={{ marginRight: 4 }} title="Contains researcher notes">📝</span>
             )}
             {getPath(req.url)}
           </span>

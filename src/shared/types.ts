@@ -30,6 +30,9 @@ export interface CapturedRequest {
   // Tagging
   tag?: 'red' | 'yellow' | 'green' | 'none';
 
+  // Notes
+  notes?: string;
+
   // Security Scan Results
   vulnerabilities?: string[];
 }
@@ -49,8 +52,12 @@ export type MessageType =
   | 'SAVE_SETTINGS'
   | 'GET_PAGE_DOM'
   | 'UPDATE_REQUEST_TAG'
+  | 'UPDATE_REQUEST_NOTES'
+  | 'UPDATE_REQUEST_BODY'
   | 'SET_REQUESTS'
-  | 'SWITCH_PROJECT';
+  | 'SWITCH_PROJECT'
+  | 'DELETE_REQUEST'
+  | 'DELETE_FILTERED_REQUESTS';
 
 export interface ExtensionMessage {
   type: MessageType;
@@ -124,6 +131,7 @@ export interface Project {
   name: string;
   createdAt: number;
   targetScope: string;
+  excludeScope?: string;
   customHeaders: CustomHeader[];
 }
 
@@ -166,6 +174,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
       name: 'Default Project',
       createdAt: 1779065857634,
       targetScope: '',
+      excludeScope: '',
       customHeaders: [],
     }
   ],

@@ -57,7 +57,7 @@ export default function Settings({ settings, onSave }: Props) {
     );
   };
 
-  const updateActiveProjectField = (field: 'targetScope' | 'customHeaders', value: any) => {
+  const updateActiveProjectField = (field: 'targetScope' | 'excludeScope' | 'customHeaders', value: any) => {
     setLocal({
       ...local,
       projects: (local.projects || []).map((p) => {
@@ -186,6 +186,19 @@ export default function Settings({ settings, onSave }: Props) {
           />
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
             Leave empty to capture all traffic. Scope filtering reduces noise.
+          </div>
+        </div>
+
+        <div className="settings-field" style={{ marginTop: 12 }}>
+          <label>Exclude Scope (Comma-separated wildcards, strings, or /regex/)</label>
+          <input
+            type="text"
+            value={activeProject.excludeScope || ''}
+            onChange={e => updateActiveProjectField('excludeScope', e.target.value)}
+            placeholder="*.doubleclick.net, analytics, /activeview|worklet/i"
+          />
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+            Supports wildcards (<code style={{color:'var(--accent-yellow)'}}>*.domain.com</code>), keyword substrings, or regular expressions starting and ending with slash (<code style={{color:'var(--accent-cyan)'}}>/pattern/i</code>).
           </div>
         </div>
 

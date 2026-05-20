@@ -143,12 +143,38 @@
         status: (this as XMLHttpRequest).status,
         statusText: (this as XMLHttpRequest).statusText,
         responseHeaders,
-        responseBody: typeof (this as XMLHttpRequest).response === 'string'
-          ? ((this as XMLHttpRequest).response as string).substring(0, 50000)
-          : undefined,
-        responseBodySize: typeof (this as XMLHttpRequest).response === 'string'
-          ? ((this as XMLHttpRequest).response as string).length
-          : undefined,
+        responseBody: (function(xhrObj) {
+          try {
+            const rt = xhrObj.responseType;
+            const resp = xhrObj.response;
+            if (rt === 'json' || (resp && typeof resp === 'object')) {
+              return JSON.stringify(resp).substring(0, 50000);
+            }
+            if (typeof resp === 'string') {
+              return resp.substring(0, 50000);
+            }
+            if (typeof xhrObj.responseText === 'string') {
+              return xhrObj.responseText.substring(0, 50000);
+            }
+          } catch (_) {}
+          return undefined;
+        })(this as XMLHttpRequest),
+        responseBodySize: (function(xhrObj) {
+          try {
+            const rt = xhrObj.responseType;
+            const resp = xhrObj.response;
+            if (rt === 'json' || (resp && typeof resp === 'object')) {
+              return JSON.stringify(resp).length;
+            }
+            if (typeof resp === 'string') {
+              return resp.length;
+            }
+            if (typeof xhrObj.responseText === 'string') {
+              return xhrObj.responseText.length;
+            }
+          } catch (_) {}
+          return undefined;
+        })(this as XMLHttpRequest),
         mimeType: (this as XMLHttpRequest).getResponseHeader('content-type') || '',
         duration,
       });

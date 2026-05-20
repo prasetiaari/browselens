@@ -30,11 +30,154 @@ function formatBody(body?: string): string {
   }
 }
 
+function decodeBase64(str: string): string {
+  try {
+    return atob(str.trim());
+  } catch (err) {
+    try {
+      let clean = str.replace(/-/g, '+').replace(/_/g, '/');
+      while (clean.length % 4) {
+        clean += '=';
+      }
+      return atob(clean);
+    } catch {
+      return `[Decoding Failed: Invalid Base64 String]`;
+    }
+  }
+}
+
+function decodeJwt(token: string): { header: string; payload: string; error?: string } {
+  try {
+    const parts = token.trim().split('.');
+    if (parts.length < 2) {
+      return { header: '', payload: '', error: 'Invalid JWT structure' };
+    }
+    
+    const decodePart = (base64Url: string) => {
+      let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      while (base64.length % 4) {
+        base64 += '=';
+      }
+      const raw = atob(base64);
+      try {
+        const parsed = JSON.parse(raw);
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return raw;
+      }
+    };
+
+    const header = decodePart(parts[0]);
+    const payload = decodePart(parts[1]);
+    return { header, payload };
+  } catch (err: any) {
+    return { header: '', payload: '', error: err?.message || 'JWT parsing failed' };
+  }
+}
+
 import { exportToCurl, exportToPython, exportToFetch } from '../../shared/export';
 
 export default function RequestDetail({ request, onSendToRepeater, onAskAI, onClose, onSendToBase64, onSendToJwt }: Props) {
   const [activeTab, setActiveTab] = useState<DetailTab>('headers');
   const [exporting, setExporting] = useState(false);
+  const [decodedB64Val, setDecodedB64Val] = useState<string | null>(null);
+  const [decodedJwtVal, setDecodedJwtVal] = useState<{ header: string; payload: string; error?: string } | null>(null);
+  const [modalCopied, setModalCopied] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const [showNotesInput, setShowNotesInput] = useState(false);
+
+  // Live preview & fetcher states
+  const [liveContent, setLiveContent] = useState<string | null>(null);
+  const [loadingLive, setLoadingLive] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+
+  if (lastRequestId !== request.id) {
+    setLastRequestId(request.id);
+    setLiveContent(null);
+    setLiveError(null);
+    setLoadingLive(false);
+  }
+
+  let detectedMime = (request.mimeType || '').toLowerCase();
+  if (request.responseBody && request.responseBody.startsWith('[Response body discarded for static assets:')) {
+    const startIdx = request.responseBody.indexOf(': ') + 2;
+    const endIdx = request.responseBody.lastIndexOf(']');
+    if (startIdx > 1 && endIdx > startIdx) {
+      detectedMime = request.responseBody.substring(startIdx, endIdx).trim().toLowerCase();
+    }
+  }
+
+  const getUrlExtension = (urlStr?: string): string => {
+    if (!urlStr) return '';
+    try {
+      const url = new URL(urlStr);
+      const pathname = url.pathname.toLowerCase();
+      const lastDot = pathname.lastIndexOf('.');
+      if (lastDot !== -1) {
+        return pathname.substring(lastDot);
+      }
+    } catch (_) {
+      const cleanUrl = urlStr.split('?')[0].split('#')[0].toLowerCase();
+      const lastDot = cleanUrl.lastIndexOf('.');
+      if (lastDot !== -1) {
+        return cleanUrl.substring(lastDot);
+      }
+    }
+    return '';
+  };
+
+  const ext = getUrlExtension(request.url);
+
+  const isImage = 
+    detectedMime.startsWith('image/') ||
+    ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'].includes(ext);
+
+  const isFont =
+    detectedMime.startsWith('font/') ||
+    ['.woff', '.woff2', '.ttf', '.otf', '.eot'].includes(ext);
+
+  const isCss =
+    detectedMime.includes('css') ||
+    ext === '.css';
+
+  const isJs =
+    detectedMime.includes('javascript') || 
+    detectedMime.includes('x-javascript') ||
+    ext === '.js';
+
+  const isFetchableText = 
+    isCss || 
+    isJs || 
+    detectedMime.includes('json') || 
+    detectedMime.includes('text') || 
+    detectedMime.includes('xml') || 
+    detectedMime.includes('html') ||
+    ['.json', '.html', '.xml', '.txt'].includes(ext);
+
+  const handleFetchLive = async () => {
+    setLoadingLive(true);
+    setLiveError(null);
+    try {
+      const res = await fetch(request.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const text = await res.text();
+      setLiveContent(text);
+    } catch (err: any) {
+      setLiveError(err.message || 'Failed to fetch live content');
+    } finally {
+      setLoadingLive(false);
+    }
+  };
+
+  const handleUpdateNotes = (notesText: string) => {
+    chrome.runtime.sendMessage({
+      type: 'UPDATE_REQUEST_NOTES',
+      payload: { id: request.id, notes: notesText }
+    });
+    setNotesSaved(true);
+    setTimeout(() => setNotesSaved(false), 1200);
+  };
 
   const handleExport = async (type: string) => {
     if (!type) return;
@@ -89,6 +232,43 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                 }}
               />
             ))}
+            <button
+              onClick={() => {
+                if (confirm('Delete this request permanently?')) {
+                  chrome.runtime.sendMessage({
+                    type: 'DELETE_REQUEST',
+                    payload: { id: request.id }
+                  });
+                  onClose();
+                }
+              }}
+              style={{
+                background: 'rgba(255, 51, 102, 0.1)',
+                border: '1px solid var(--accent-red)',
+                color: 'var(--accent-red)',
+                borderRadius: 4,
+                padding: '2px 8px',
+                fontSize: 10,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                marginLeft: 10,
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--accent-red)';
+                e.currentTarget.style.color = '#fff';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 51, 102, 0.1)';
+                e.currentTarget.style.color = 'var(--accent-red)';
+              }}
+              title="Delete request"
+            >
+              🗑️ Delete
+            </button>
           </div>
         </div>
         <div className="detail-tabs">
@@ -155,9 +335,224 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
       </div>
 
       <div className="detail-body">
+        {/* TOP LEVEL LIVE PREVIEWS (🖼️ / 🔤) */}
+        {isImage && (
+          <div className="live-preview-container" style={{
+            marginBottom: 16,
+            padding: 18,
+            borderRadius: 8,
+            border: '1px solid var(--accent-cyan)',
+            background: 'rgba(0, 229, 255, 0.04)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 12,
+            boxShadow: '0 4px 20px rgba(0, 229, 255, 0.08)'
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: 1.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🖼️ Live Image Preview</span>
+              <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 10, background: 'var(--accent-cyan)', color: '#000', fontWeight: 800 }}>LIVE</span>
+            </div>
+            <div style={{
+              position: 'relative',
+              padding: 12,
+              border: '1px solid var(--border-color)',
+              borderRadius: 6,
+              background: '#0a0e14',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 180,
+              width: '100%',
+              boxSizing: 'border-box',
+              overflow: 'hidden'
+            }}>
+              <img 
+                src={request.url} 
+                alt="Live preview" 
+                style={{ 
+                  maxWidth: '100%', 
+                  maxHeight: 320, 
+                  objectFit: 'contain',
+                  borderRadius: 4
+                }}
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  const parent = e.currentTarget.parentElement;
+                  if (parent) {
+                    const errEl = document.createElement('div');
+                    errEl.innerText = '⚠️ Live preview blocked (Authentication or CORS required)';
+                    errEl.style.fontSize = '12px';
+                    errEl.style.color = 'var(--accent-red)';
+                    errEl.style.fontWeight = '700';
+                    parent.appendChild(errEl);
+                  }
+                }}
+              />
+            </div>
+            <a 
+              href={request.url} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              style={{
+                fontSize: 12.5,
+                color: 'var(--accent-cyan)',
+                textDecoration: 'none',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4
+              }}
+            >
+              Open Asset URL in New Tab ↗
+            </a>
+          </div>
+        )}
+
+        {isFont && (
+          <div className="live-preview-container" style={{
+            marginBottom: 16,
+            padding: 18,
+            borderRadius: 8,
+            border: '1px solid var(--accent-cyan)',
+            background: 'rgba(0, 229, 255, 0.04)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            boxShadow: '0 4px 20px rgba(0, 229, 255, 0.08)'
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: 1.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🔤 Dynamic Font Preview</span>
+              <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 10, background: 'var(--accent-cyan)', color: '#000', fontWeight: 800 }}>LIVE</span>
+            </div>
+            <style dangerouslySetInnerHTML={{__html: `
+              @font-face {
+                font-family: 'top-preview-font-${request.id}';
+                src: url('${request.url}');
+              }
+            `}} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Type to test this custom font live:</label>
+              <input 
+                type="text"
+                defaultValue="The quick brown fox jumps over the lazy dog. 1234567890"
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  background: '#0a0e14',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 4,
+                  color: '#fff',
+                  fontSize: 16,
+                  fontFamily: `'top-preview-font-${request.id}', sans-serif`,
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+          </div>
+        )}
         {activeTab === 'headers' && (
           <>
-            <div style={{ marginBottom: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+            {/* Researcher Notes Section */}
+            {(request.notes && request.notes.trim() !== '') || showNotesInput ? (
+              <div style={{
+                marginBottom: 12,
+                background: 'rgba(255, 170, 0, 0.05)',
+                border: '1px solid rgba(255, 170, 0, 0.2)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '10px 12px',
+                boxSizing: 'border-box'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-yellow)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-sans)', letterSpacing: '0.5px' }}>
+                    📝 Researcher Notes
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {notesSaved && (
+                      <span style={{ fontSize: 10, color: 'var(--accent-green)', fontWeight: 700, fontFamily: 'var(--font-sans)' }}>
+                        ✓ Auto-saved
+                      </span>
+                    )}
+                    <button
+                      onClick={() => {
+                        setShowNotesInput(false);
+                        // If notes are empty, let's clear it completely so the button displays again!
+                        if (!request.notes || request.notes.trim() === '') {
+                          handleUpdateNotes('');
+                        }
+                      }}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10.5, fontFamily: 'var(--font-sans)', fontWeight: 600, padding: 0 }}
+                      title="Hide/Minimize Notes Card"
+                    >
+                      ✕ Hide
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={request.notes || ''}
+                  onChange={(e) => handleUpdateNotes(e.target.value)}
+                  placeholder="Type exploit notes, parameter findings, or custom vulnerabilities here... (auto-saved)"
+                  style={{
+                    width: '100%',
+                    height: 64,
+                    background: 'var(--bg-darker)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 4,
+                    color: 'var(--text-primary)',
+                    fontFamily: 'var(--font-sans)',
+                    fontSize: 12,
+                    padding: '6px 10px',
+                    boxSizing: 'border-box',
+                    resize: 'vertical',
+                    outline: 'none',
+                    lineHeight: 1.4
+                  }}
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowNotesInput(true)}
+                style={{
+                  background: 'rgba(255, 170, 0, 0.03)',
+                  border: '1px dashed rgba(255, 170, 0, 0.25)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--accent-yellow)',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '8px 12px',
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginBottom: 12,
+                  transition: 'all 0.15s ease',
+                  boxSizing: 'border-box',
+                  fontFamily: 'var(--font-sans)'
+                }}
+                className="add-notes-dashed-btn"
+                title="Add security or pentesting notes to this request"
+              >
+                <span>📝 Add Researcher Notes...</span>
+              </button>
+            )}
+
+            <div style={{ 
+              marginBottom: 12, 
+              fontSize: 13, 
+              fontFamily: 'var(--font-mono)',
+              color: 'var(--accent-cyan)', 
+              wordBreak: 'break-all',
+              lineHeight: 1.45,
+              background: 'rgba(0, 229, 255, 0.05)',
+              border: '1px solid rgba(0, 229, 255, 0.15)',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              userSelect: 'all',
+              fontWeight: 500
+            }}>
               {request.url}
             </div>
             
@@ -192,18 +587,9 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                       <span>{value as string}</span>
                       <span className="header-value-actions" style={{ display: 'inline-flex', gap: 4, flexShrink: 0 }}>
                         <button
-                          onClick={() => onSendToBase64?.(value as string)}
-                          style={{
-                            background: 'rgba(0, 229, 255, 0.1)',
-                            border: '1px solid var(--accent-cyan)',
-                            borderRadius: 3,
-                            color: 'var(--accent-cyan)',
-                            fontSize: 7,
-                            fontWeight: 700,
-                            padding: '1px 3px',
-                            cursor: 'pointer',
-                          }}
-                          title="Send to Base64 Decoder"
+                          onClick={() => setDecodedB64Val(value as string)}
+                          className="badge-btn-b64"
+                          title="Decode Base64 inline"
                         >
                           B64
                         </button>
@@ -214,19 +600,10 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                               if (token.toLowerCase().startsWith('bearer ')) {
                                 token = token.substring(7);
                               }
-                              onSendToJwt?.(token);
+                              setDecodedJwtVal(decodeJwt(token));
                             }}
-                            style={{
-                              background: 'rgba(255, 51, 102, 0.1)',
-                              border: '1px solid #ff3366',
-                              borderRadius: 3,
-                              color: '#ff3366',
-                              fontSize: 7,
-                              fontWeight: 700,
-                              padding: '1px 3px',
-                              cursor: 'pointer',
-                            }}
-                            title="Send to JWT Decoder"
+                            className="badge-btn-jwt"
+                            title="Decode JWT inline"
                           >
                             JWT
                           </button>
@@ -250,18 +627,9 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                         <span>{value as string}</span>
                         <span className="header-value-actions" style={{ display: 'inline-flex', gap: 4, flexShrink: 0 }}>
                           <button
-                            onClick={() => onSendToBase64?.(value as string)}
-                            style={{
-                              background: 'rgba(0, 229, 255, 0.1)',
-                              border: '1px solid var(--accent-cyan)',
-                              borderRadius: 3,
-                              color: 'var(--accent-cyan)',
-                              fontSize: 7,
-                              fontWeight: 700,
-                              padding: '1px 3px',
-                              cursor: 'pointer',
-                            }}
-                            title="Send to Base64 Decoder"
+                            onClick={() => setDecodedB64Val(value as string)}
+                            className="badge-btn-b64"
+                            title="Decode Base64 inline"
                           >
                             B64
                           </button>
@@ -272,19 +640,10 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                                 if (token.toLowerCase().startsWith('bearer ')) {
                                   token = token.substring(7);
                                 }
-                                onSendToJwt?.(token);
+                                setDecodedJwtVal(decodeJwt(token));
                               }}
-                              style={{
-                                background: 'rgba(255, 51, 102, 0.1)',
-                                border: '1px solid #ff3366',
-                                borderRadius: 3,
-                                color: '#ff3366',
-                                fontSize: 7,
-                                fontWeight: 700,
-                                padding: '1px 3px',
-                                cursor: 'pointer',
-                              }}
-                              title="Send to JWT Decoder"
+                              className="badge-btn-jwt"
+                              title="Decode JWT inline"
                             >
                               JWT
                             </button>
@@ -306,11 +665,362 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
         )}
 
         {activeTab === 'response' && (
-          <div className="detail-raw">
-            {formatBody(request.responseBody) || '(no response body captured)'}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {!(isImage || isFont) ? (
+              <div className="detail-raw" style={{ flexShrink: 0 }}>
+                {formatBody(request.responseBody) || '(no response body captured)'}
+              </div>
+            ) : (
+              <div style={{ 
+                fontSize: 10, 
+                color: 'var(--text-muted)', 
+                background: 'rgba(255,255,255,0.02)', 
+                border: '1px dashed var(--border-color)', 
+                padding: '6px 10px', 
+                borderRadius: 4,
+                fontFamily: 'var(--font-mono)'
+              }}>
+                ℹ️ {request.responseBody || '[Response body discarded for static assets]'}
+              </div>
+            )}
+
+            {/* LIVE PREVIEWS & UTILITIES */}
+            {isImage && (
+              <div className="live-preview-container" style={{
+                padding: 16,
+                borderRadius: 8,
+                border: '1px solid var(--border-color)',
+                background: 'rgba(0, 229, 255, 0.03)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 12,
+                boxShadow: 'inset 0 0 12px rgba(0,229,255,0.05)'
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🖼️ Live Image Preview</span>
+                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, background: 'rgba(0, 229, 255, 0.15)', color: 'var(--accent-cyan)' }}>Live Fetch</span>
+                </div>
+                <div style={{
+                  position: 'relative',
+                  padding: 8,
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 6,
+                  background: '#0a0e14',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: 180,
+                  width: '100%',
+                  overflow: 'hidden'
+                }}>
+                  <img 
+                    src={request.url} 
+                    alt="Live preview" 
+                    style={{ 
+                      maxWidth: '100%', 
+                      maxHeight: 320, 
+                      objectFit: 'contain',
+                      borderRadius: 4
+                    }}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                      const parent = e.currentTarget.parentElement;
+                      if (parent) {
+                        const errEl = document.createElement('div');
+                        errEl.innerText = '⚠️ Live preview blocked (Authentication or CORS required)';
+                        errEl.style.fontSize = '12px';
+                        errEl.style.color = 'var(--accent-red)';
+                        errEl.style.fontWeight = '700';
+                        parent.appendChild(errEl);
+                      }
+                    }}
+                  />
+                </div>
+                <a 
+                  href={request.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--accent-cyan)',
+                    textDecoration: 'none',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4
+                  }}
+                >
+                  Open Asset URL in New Tab ↗
+                </a>
+              </div>
+            )}
+
+            {isFont && (
+              <div className="live-preview-container" style={{
+                padding: 16,
+                borderRadius: 8,
+                border: '1px solid var(--border-color)',
+                background: 'rgba(0, 229, 255, 0.03)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                boxShadow: 'inset 0 0 12px rgba(0,229,255,0.05)'
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🔤 Dynamic Font Preview</span>
+                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, background: 'rgba(0, 229, 255, 0.15)', color: 'var(--accent-cyan)' }}>Live Fetch</span>
+                </div>
+                <style dangerouslySetInnerHTML={{__html: `
+                  @font-face {
+                    font-family: 'preview-font-${request.id}';
+                    src: url('${request.url}');
+                  }
+                `}} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Type to test this custom font live:</label>
+                  <input 
+                    type="text"
+                    defaultValue="The quick brown fox jumps over the lazy dog. 1234567890"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      background: '#0a0e14',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 4,
+                      color: '#fff',
+                      fontSize: 16,
+                      fontFamily: `'preview-font-${request.id}', sans-serif`,
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {isFetchableText && (
+              <div className="live-preview-container" style={{
+                padding: 16,
+                borderRadius: 8,
+                border: '1px solid var(--border-color)',
+                background: 'rgba(0, 229, 255, 0.03)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                boxShadow: 'inset 0 0 12px rgba(0,229,255,0.05)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>⚡ Live Server Auditor</span>
+                  </div>
+                  {!liveContent && !loadingLive && (
+                    <button
+                      onClick={handleFetchLive}
+                      style={{
+                        background: 'var(--accent-cyan)',
+                        border: 'none',
+                        color: '#000',
+                        padding: '4px 10px',
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4
+                      }}
+                    >
+                      🚀 Fetch Live Content
+                    </button>
+                  )}
+                </div>
+
+                {loadingLive && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0' }}>
+                    <div className="spinner-mini" style={{
+                      width: 12,
+                      height: 12,
+                      border: '2px solid rgba(0,229,255,0.2)',
+                      borderTop: '2px solid var(--accent-cyan)',
+                      borderRadius: '50%',
+                      animation: 'spin 0.8s linear infinite'
+                    }} />
+                    <span>Fetching fresh asset content directly from target server...</span>
+                  </div>
+                )}
+
+                {liveError && (
+                  <div style={{ color: 'var(--accent-red)', fontSize: 12, fontWeight: 700 }}>
+                    ❌ {liveError}
+                  </div>
+                )}
+
+                {liveContent !== null && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Fetched {liveContent.length} bytes successfully</span>
+                      <button
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(liveContent);
+                          setModalCopied(true);
+                          setTimeout(() => setModalCopied(false), 1200);
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-secondary)',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {modalCopied ? '✅ Copied' : '📋 Copy Content'}
+                      </button>
+                    </div>
+                    <pre className="detail-raw" style={{ 
+                      maxHeight: 250, 
+                      overflowY: 'auto', 
+                      background: '#0a0e14', 
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all'
+                    }}>
+                      {formatBody(liveContent)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Base64 Decoder Popup Modal */}
+      {decodedB64Val !== null && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(10, 14, 20, 0.95)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: 16,
+          boxSizing: 'border-box'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-primary)', paddingBottom: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              🔍 Base64 Decoded Value
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={async () => {
+                  try {
+                    const decoded = decodeBase64(decodedB64Val);
+                    await navigator.clipboard.writeText(decoded);
+                    setModalCopied(true);
+                    setTimeout(() => setModalCopied(false), 1500);
+                  } catch {}
+                }}
+                className="tool-btn-primary"
+                style={{ fontSize: 11, padding: '3px 8px', background: modalCopied ? 'rgba(0, 255, 136, 0.1)' : 'transparent', color: modalCopied ? 'var(--accent-green)' : 'var(--text-primary)', border: modalCopied ? '1px solid var(--accent-green)' : '1px solid var(--border-primary)', borderRadius: 4, cursor: 'pointer' }}
+              >
+                {modalCopied ? '✓ Copied' : '📋 Copy'}
+              </button>
+              <button
+                onClick={() => setDecodedB64Val(null)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-darker)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-sm)', padding: 12, fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {decodeBase64(decodedB64Val)}
+          </div>
+        </div>
+      )}
+
+      {/* JWT Decoder Popup Modal */}
+      {decodedJwtVal !== null && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(10, 14, 20, 0.95)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: 16,
+          boxSizing: 'border-box'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-primary)', paddingBottom: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: '#ff3366', display: 'flex', alignItems: 'center', gap: 6 }}>
+              🔑 JWT Decoded Payload
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={async () => {
+                  try {
+                    const tokenText = JSON.stringify({
+                      header: JSON.parse(decodedJwtVal.header),
+                      payload: JSON.parse(decodedJwtVal.payload)
+                    }, null, 2);
+                    await navigator.clipboard.writeText(tokenText);
+                    setModalCopied(true);
+                    setTimeout(() => setModalCopied(false), 1500);
+                  } catch {
+                    await navigator.clipboard.writeText(`${decodedJwtVal.header}\n\n${decodedJwtVal.payload}`);
+                    setModalCopied(true);
+                    setTimeout(() => setModalCopied(false), 1500);
+                  }
+                }}
+                className="tool-btn-primary"
+                style={{ fontSize: 11, padding: '3px 8px', background: modalCopied ? 'rgba(0, 255, 136, 0.1)' : 'transparent', color: modalCopied ? 'var(--accent-green)' : 'var(--text-primary)', border: modalCopied ? '1px solid var(--accent-green)' : '1px solid var(--border-primary)', borderRadius: 4, cursor: 'pointer' }}
+              >
+                {modalCopied ? '✓ Copied' : '📋 Copy All'}
+              </button>
+              <button
+                onClick={() => setDecodedJwtVal(null)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+            {decodedJwtVal.error ? (
+              <div style={{ color: 'var(--accent-red)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                ⚠️ {decodedJwtVal.error}
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <div style={{ fontSize: 11, color: '#ff3366', fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>Header</div>
+                  <pre style={{ flex: 1, margin: 0, overflow: 'auto', background: 'var(--bg-darker)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-sm)', padding: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: '#ff3366' }}>
+                    {decodedJwtVal.header}
+                  </pre>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1.5 }}>
+                  <div style={{ fontSize: 11, color: 'var(--accent-cyan)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>Payload / Claims</div>
+                  <pre style={{ flex: 1, margin: 0, overflow: 'auto', background: 'var(--bg-darker)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-sm)', padding: 10, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--accent-cyan)' }}>
+                    {decodedJwtVal.payload}
+                  </pre>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

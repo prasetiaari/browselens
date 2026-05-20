@@ -363,32 +363,37 @@ const pendingWebRequests = new Map<string, WebReqState>();
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
-    if (!settings.capture.enabled) return;
-    if (details.url.startsWith('chrome-extension://') || details.url.includes('localhost:11434') || details.url.includes('localhost:1234')) return;
+    try {
+      if (!settings.capture.enabled) return;
+      if (details.initiator && details.initiator.startsWith('chrome-extension://')) return;
+      if (details.url.startsWith('chrome-extension://') || details.url.includes('localhost:11434') || details.url.includes('localhost:1234')) return;
 
-    let bodyStr = '';
-    if (details.requestBody) {
-      if (details.requestBody.raw && details.requestBody.raw[0].bytes) {
-        bodyStr = new TextDecoder('utf-8').decode(details.requestBody.raw[0].bytes);
-      } else if (details.requestBody.formData) {
-        const params = new URLSearchParams();
-        for (const [key, values] of Object.entries(details.requestBody.formData)) {
-          for (const val of values) {
-            params.append(key, typeof val === 'string' ? val : '[Binary File]');
+      let bodyStr = '';
+      if (details.requestBody) {
+        if (details.requestBody.raw && details.requestBody.raw[0] && details.requestBody.raw[0].bytes) {
+          bodyStr = new TextDecoder('utf-8').decode(details.requestBody.raw[0].bytes);
+        } else if (details.requestBody.formData) {
+          const params = new URLSearchParams();
+          for (const [key, values] of Object.entries(details.requestBody.formData)) {
+            for (const val of values) {
+              params.append(key, typeof val === 'string' ? val : '[Binary File]');
+            }
           }
+          bodyStr = params.toString();
         }
-        bodyStr = params.toString();
       }
-    }
 
-    pendingWebRequests.set(details.requestId, {
-      id: `wr-${details.requestId}-${Date.now()}`,
-      method: details.method,
-      url: details.url,
-      requestBody: bodyStr || undefined,
-      requestHeaders: {},
-      timestamp: details.timeStamp,
-    });
+      pendingWebRequests.set(details.requestId, {
+        id: `wr-${details.requestId}-${Date.now()}`,
+        method: details.method,
+        url: details.url,
+        requestBody: bodyStr || undefined,
+        requestHeaders: {},
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      console.error('[BrowseLens] onBeforeRequest listener error:', err);
+    }
   },
   { urls: ['<all_urls>'] },
   ['requestBody']
@@ -396,36 +401,72 @@ chrome.webRequest.onBeforeRequest.addListener(
 
 chrome.webRequest.onSendHeaders.addListener(
   (details) => {
-    const req = pendingWebRequests.get(details.requestId);
-    if (req && details.requestHeaders) {
-      details.requestHeaders.forEach(h => {
-        if (h.name && h.value) req.requestHeaders[h.name] = h.value;
-      });
+    try {
+      const req = pendingWebRequests.get(details.requestId);
+      if (req && details.requestHeaders) {
+        details.requestHeaders.forEach(h => {
+          if (h.name && h.value) req.requestHeaders[h.name] = h.value;
+        });
+      }
+    } catch (err) {
+      console.error('[BrowseLens] onSendHeaders listener error:', err);
     }
   },
   { urls: ['<all_urls>'] },
   ['requestHeaders']
 );
 
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    try {
+      const req = pendingWebRequests.get(details.requestId);
+      if (req && details.responseHeaders) {
+        const headers: Record<string, string> = {};
+        let mimeType = '';
+        details.responseHeaders.forEach(h => {
+          if (h.name && h.value) {
+            headers[h.name.toLowerCase()] = h.value;
+            if (h.name.toLowerCase() === 'content-type') {
+              mimeType = h.value.split(';')[0].trim().toLowerCase();
+            }
+          }
+        });
+        (req as any).responseHeaders = headers;
+        (req as any).mimeType = mimeType;
+      }
+    } catch (err) {
+      console.error('[BrowseLens] onHeadersReceived listener error:', err);
+    }
+  },
+  { urls: ['<all_urls>'] },
+  ['responseHeaders']
+);
+
 chrome.webRequest.onCompleted.addListener(
   (details) => {
-    const req = pendingWebRequests.get(details.requestId);
-    if (!req) return;
-    pendingWebRequests.delete(details.requestId);
+    try {
+      const req = pendingWebRequests.get(details.requestId);
+      if (!req) return;
+      pendingWebRequests.delete(details.requestId);
 
-    const request: CapturedRequest = {
-      id: req.id,
-      timestamp: req.timestamp,
-      tabId: details.tabId,
-      source: 'devtools', // we use devtools tag so it looks consistent
-      method: req.method,
-      url: req.url,
-      requestHeaders: req.requestHeaders,
-      requestBody: req.requestBody,
-      status: details.statusCode,
-    };
+      const request: CapturedRequest = {
+        id: req.id,
+        timestamp: req.timestamp,
+        tabId: details.tabId,
+        source: 'devtools', // we use devtools tag so it looks consistent
+        method: req.method,
+        url: req.url,
+        requestHeaders: req.requestHeaders,
+        requestBody: req.requestBody,
+        status: details.statusCode,
+        responseHeaders: (req as any).responseHeaders || {},
+        mimeType: (req as any).mimeType || '',
+      };
 
-    handleMessage({ type: 'REQUEST_CAPTURED', payload: request }, () => {});
+      handleMessage({ type: 'REQUEST_CAPTURED', payload: request }, () => {});
+    } catch (err) {
+      console.error('[BrowseLens] onCompleted listener error:', err);
+    }
   },
   { urls: ['<all_urls>'] }
 );
@@ -437,6 +478,19 @@ setInterval(() => {
     if (now - req.timestamp > 60000) pendingWebRequests.delete(id);
   }
 }, 60000);
+
+function normalizeJsUrl(urlStr: string): string {
+  try {
+    const url = new URL(urlStr);
+    url.search = '';
+    url.hash = '';
+    let pathname = url.pathname;
+    pathname = pathname.replace(/[.-][a-zA-Z0-9_-]{6,30}(?=\.js$)/, '');
+    return url.origin + pathname;
+  } catch {
+    return urlStr.split('?')[0];
+  }
+}
 
 // ---- Message Handling ----
 chrome.runtime.onMessage.addListener(
@@ -470,7 +524,6 @@ async function handleMessage(
         mime.startsWith('video/') || 
         mime.startsWith('audio/') || 
         mime.startsWith('font/') ||
-        mime.includes('javascript') || 
         mime.includes('css') ||
         url.endsWith('.png') || 
         url.endsWith('.jpg') || 
@@ -479,7 +532,6 @@ async function handleMessage(
         url.endsWith('.webp') || 
         url.endsWith('.svg') || 
         url.endsWith('.css') || 
-        url.endsWith('.js') || 
         url.endsWith('.woff') || 
         url.endsWith('.woff2') || 
         url.endsWith('.ttf');
@@ -487,6 +539,22 @@ async function handleMessage(
       if (isHeavyAsset && request.responseBody) {
         request.responseBody = `[Response body discarded for static assets: ${mime || 'asset'}]`;
         request.responseBodySize = 0;
+      }
+
+      // 1b. Resilient Audit History: Auto-populate empty JS body if the same URL was already audited in the active project
+      const isJsAsset = url.endsWith('.js') || url.includes('.js?') || mime.includes('javascript') || mime.includes('x-javascript');
+      if (isJsAsset && (!request.responseBody || request.responseBody.startsWith('[Response body discarded'))) {
+        const normUrl = normalizeJsUrl(request.url);
+        const existingAudit = capturedRequests.find(r => 
+          normalizeJsUrl(r.url) === normUrl && 
+          r.responseBody && 
+          !r.responseBody.startsWith('[Response body discarded')
+        );
+        if (existingAudit) {
+          request.responseBody = existingAudit.responseBody;
+          request.responseBodySize = existingAudit.responseBodySize;
+          logDebug(`Audit History auto-populated JS body from matching URL: ${request.url}`);
+        }
       }
 
       // 2. Limit the stored response/request body size to max 150 KB to prevent Chrome storage serialization failures
@@ -515,29 +583,143 @@ async function handleMessage(
       if (activeProject.targetScope && activeProject.targetScope.trim() !== '') {
         const scopes = activeProject.targetScope.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
         const reqUrl = (request.url || '').toLowerCase();
+        // Extract hostname from URL for precise matching
+        let hostname = '';
+        try {
+          hostname = new URL(reqUrl).hostname;
+        } catch (_) {
+          // Fallback to raw URL if parsing fails
+          hostname = reqUrl;
+        }
         let inScope = false;
-        
+
         for (const scope of scopes) {
-          if (reqUrl.includes(scope)) {
+          const cleanScope = scope.startsWith('*.') ? scope.slice(2) : scope;
+          if (hostname === cleanScope || hostname.endsWith(`.${cleanScope}`)) {
             inScope = true;
             break;
           }
         }
-        
+
         if (!inScope) {
-           logDebug(`REQUEST_CAPTURED rejected - out of scope: ${reqUrl}`);
-           console.warn('[BrowseLens] REJECTED out of scope. scopes=', scopes, 'url=', reqUrl);
-           sendResponse({ success: false, reason: 'out of scope' });
-           return;
+          logDebug(`REQUEST_CAPTURED rejected - out of scope: ${reqUrl} (hostname: ${hostname})`);
+          console.warn('[BrowseLens] REJECTED out of scope. scopes=', scopes, 'url=', reqUrl, 'hostname=', hostname);
+          sendResponse({ success: false, reason: 'out of scope' });
+          return;
         }
       }
 
-      // Deduplicate by ID
+      // Check Exclude Scope for active project
+      if (activeProject.excludeScope && activeProject.excludeScope.trim() !== '') {
+        const excludes = activeProject.excludeScope.split(',').map(s => s.trim()).filter(Boolean);
+        const reqUrl = (request.url || '').toLowerCase();
+        let hostname = '';
+        try {
+          hostname = new URL(reqUrl).hostname;
+        } catch (_) {
+          hostname = reqUrl;
+        }
+        
+        let excluded = false;
+        for (const item of excludes) {
+          const lowerItem = item.toLowerCase();
+          
+          // Regex Match (e.g. /activeview|worklet/i or /activeview|worklet/)
+          if (item.startsWith('/') && item.lastIndexOf('/') > 0) {
+            try {
+              const lastSlashIdx = item.lastIndexOf('/');
+              const pattern = item.slice(1, lastSlashIdx);
+              const flags = item.slice(lastSlashIdx + 1);
+              const regex = new RegExp(pattern, flags.includes('i') ? 'i' : '');
+              if (regex.test(request.url)) {
+                excluded = true;
+                break;
+              }
+            } catch (err) {
+              console.error('[BrowseLens] Exclude scope regex failed to compile:', item, err);
+            }
+          }
+          // Wildcard Subdomains Match (e.g., "*.doubleclick.net")
+          else if (lowerItem.startsWith('*.')) {
+            const base = lowerItem.slice(2);
+            if (hostname === base || hostname.endsWith(`.${base}`)) {
+              excluded = true;
+              break;
+            }
+          } 
+          // Substring / Exact Host Match
+          else {
+            if (hostname.includes(lowerItem) || reqUrl.includes(lowerItem)) {
+              excluded = true;
+              break;
+            }
+          }
+        }
+
+        if (excluded) {
+          logDebug(`REQUEST_CAPTURED rejected - matched exclude scope: ${reqUrl}`);
+          console.warn('[BrowseLens] REJECTED - matched exclude scope. excludes=', excludes, 'url=', reqUrl);
+          sendResponse({ success: false, reason: 'excluded scope' });
+          return;
+        }
+      }
+
+      // Deduplicate and Merge (by ID OR by Method + URL + Closeness + RequestBody)
       let mergedRequest = request;
-      const existingIdx = capturedRequests.findIndex(r => r.id === request.id);
+      let existingIdx = capturedRequests.findIndex(r => r.id === request.id);
+      
+      if (existingIdx === -1) {
+        // Try to match by Method + URL + Timestamp closeness + stripped RequestBody match
+        existingIdx = capturedRequests.findIndex(r => {
+          const sameMethod = r.method === request.method;
+          const sameUrl = r.url === request.url;
+          const closeTime = Math.abs((r.timestamp || 0) - (request.timestamp || 0)) < 5000;
+          
+          if (!sameMethod || !sameUrl || !closeTime) return false;
+          
+          // If request body is present in either, compare stripped content to prevent accidental POST merges
+          const rBodyClean = r.requestBody ? r.requestBody.replace(/\s+/g, '') : '';
+          const reqBodyClean = request.requestBody ? request.requestBody.replace(/\s+/g, '') : '';
+          if (rBodyClean || reqBodyClean) {
+            return rBodyClean === reqBodyClean;
+          }
+          
+          return true;
+        });
+      }
+
       if (existingIdx >= 0) {
-        capturedRequests[existingIdx] = { ...capturedRequests[existingIdx], ...request };
-        mergedRequest = capturedRequests[existingIdx];
+        // Merge properties securely
+        const target = { ...capturedRequests[existingIdx] };
+        
+        // Preserve responseBody if incoming has it
+        if (request.responseBody && (!target.responseBody || target.responseBody.startsWith('[Response body discarded') || target.responseBody === '[Could not read response body]')) {
+          target.responseBody = request.responseBody;
+          target.responseBodySize = request.responseBodySize;
+        }
+        
+        // Preserve requestBody if incoming has it
+        if (request.requestBody && (!target.requestBody || target.requestBody.startsWith('[Request body discarded'))) {
+          target.requestBody = request.requestBody;
+          target.requestBodySize = request.requestBodySize;
+        }
+
+        // Merge headers (keep whichever has more headers)
+        if (request.requestHeaders && Object.keys(request.requestHeaders).length > (target.requestHeaders ? Object.keys(target.requestHeaders).length : 0)) {
+          target.requestHeaders = { ...target.requestHeaders, ...request.requestHeaders };
+        }
+        if (request.responseHeaders && Object.keys(request.responseHeaders).length > (target.responseHeaders ? Object.keys(target.responseHeaders).length : 0)) {
+          target.responseHeaders = { ...target.responseHeaders, ...request.responseHeaders };
+        }
+
+        // Merge status and other fields
+        if (request.status && !target.status) target.status = request.status;
+        if (request.statusText && !target.statusText) target.statusText = request.statusText;
+        if (request.duration && !target.duration) target.duration = request.duration;
+        if (request.mimeType && !target.mimeType) target.mimeType = request.mimeType;
+
+        capturedRequests[existingIdx] = target;
+        mergedRequest = target;
       } else {
         capturedRequests.push(request);
       }
@@ -590,6 +772,39 @@ async function handleMessage(
       break;
     }
 
+    case 'UPDATE_REQUEST_NOTES': {
+      const { id, notes } = message.payload as { id: string; notes: string };
+      const req = capturedRequests.find(r => r.id === id);
+      if (req) {
+        req.notes = notes;
+        await saveSingleRequest(req);
+        // Broadcast update to side panels
+        chrome.runtime.sendMessage({
+          type: 'REQUEST_CAPTURED',
+          payload: req,
+        }).catch(() => {});
+      }
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'UPDATE_REQUEST_BODY': {
+      const { id, responseBody } = message.payload as { id: string; responseBody: string };
+      const req = capturedRequests.find(r => r.id === id);
+      if (req) {
+        req.responseBody = responseBody;
+        req.responseBodySize = responseBody.length;
+        await saveSingleRequest(req);
+        // Broadcast update to side panels
+        chrome.runtime.sendMessage({
+          type: 'REQUEST_CAPTURED',
+          payload: req,
+        }).catch(() => {});
+      }
+      sendResponse({ success: true });
+      break;
+    }
+
     case 'GET_REQUESTS': {
       sendResponse({ requests: capturedRequests });
       break;
@@ -613,6 +828,48 @@ async function handleMessage(
       
       await chrome.storage.local.remove(keysToDelete);
       capturedRequests = [];
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'DELETE_REQUEST': {
+      const { id } = message.payload as { id: string };
+      const projId = settings.currentProjectId || 'default';
+      const indexKey = `requests_index_${projId}`;
+      const requestKey = `request_${projId}_${id}`;
+      
+      capturedRequests = capturedRequests.filter(r => r.id !== id);
+      const index = capturedRequests.map(r => r.id);
+      await chrome.storage.local.remove(requestKey);
+      await chrome.storage.local.set({ [indexKey]: index });
+      
+      // Broadcast deletion to side panels
+      chrome.runtime.sendMessage({
+        type: 'REQUEST_DELETED',
+        payload: { id }
+      }).catch(() => {});
+      
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'DELETE_FILTERED_REQUESTS': {
+      const { ids } = message.payload as { ids: string[] };
+      const projId = settings.currentProjectId || 'default';
+      const indexKey = `requests_index_${projId}`;
+      
+      capturedRequests = capturedRequests.filter(r => !ids.includes(r.id));
+      const requestKeys = ids.map(id => `request_${projId}_${id}`);
+      const index = capturedRequests.map(r => r.id);
+      await chrome.storage.local.remove(requestKeys);
+      await chrome.storage.local.set({ [indexKey]: index });
+      
+      // Broadcast deletion to side panels
+      chrome.runtime.sendMessage({
+        type: 'FILTERED_REQUESTS_DELETED',
+        payload: { ids }
+      }).catch(() => {});
+      
       sendResponse({ success: true });
       break;
     }

@@ -48,6 +48,48 @@ export default function Repeater({ initialRequest }: Props) {
   
   const [activeTab, setActiveTab] = useState<RepeaterTab>('req_headers');
   const [responseTab, setResponseTab] = useState<'body' | 'headers'>('body');
+  const [showPayloads, setShowPayloads] = useState(false);
+  const [payloadCopied, setPayloadCopied] = useState<string | null>(null);
+
+  const payloads = [
+    {
+      category: '💉 SQL Injection (SQLi)',
+      items: [
+        { name: "Auth Bypass (Quote)", value: "' OR '1'='1" },
+        { name: "Auth Bypass (Dash)", value: "admin' --" },
+        { name: "UNION Select", value: "' UNION SELECT NULL, NULL, NULL --" },
+      ]
+    },
+    {
+      category: '👁️ Cross-Site Scripting (XSS)',
+      items: [
+        { name: "Basic Alert Script", value: "<script>alert(1)</script>" },
+        { name: "SVG Onload", value: "\"><svg onload=alert(1)>" },
+        { name: "Javascript URI", value: "javascript:alert(1)" },
+      ]
+    },
+    {
+      category: '📂 Path Traversal (LFI)',
+      items: [
+        { name: "Linux Passwd", value: "../../../../etc/passwd" },
+        { name: "Windows Win.ini", value: "..\\..\\..\\..\\windows\\win.ini" },
+      ]
+    },
+    {
+      category: '🌐 Server-Side Request Forgery (SSRF)',
+      items: [
+        { name: "AWS Metadata", value: "http://169.254.169.254/latest/meta-data/" },
+        { name: "Localhost API", value: "http://localhost:8080" },
+      ]
+    },
+    {
+      category: '💻 Command Injection (RCE)',
+      items: [
+        { name: "Unix Semi-colon", value: "; id;" },
+        { name: "Unix Pipe", value: "| cat /etc/passwd" },
+      ]
+    }
+  ];
 
   useEffect(() => {
     if (initialRequest) {
@@ -134,6 +176,14 @@ export default function Repeater({ initialRequest }: Props) {
           onChange={e => setUrl(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSend()}
         />
+        <button
+          className="repeater-send-btn"
+          style={{ background: 'transparent', border: '1.5px solid var(--accent-yellow)', color: 'var(--accent-yellow)', marginRight: 6, fontWeight: 700 }}
+          onClick={() => setShowPayloads(prev => !prev)}
+          title="Open Curated Attack Payloads Library"
+        >
+          ⚡ Payloads
+        </button>
         <button
           className="repeater-send-btn"
           onClick={handleSend}
@@ -290,6 +340,83 @@ export default function Repeater({ initialRequest }: Props) {
           </div>
         )}
       </div>
+
+      {/* Payloads Cheat Sheet Drawer */}
+      {showPayloads && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          width: '260px',
+          bottom: 0,
+          background: 'rgba(10, 14, 20, 0.96)',
+          backdropFilter: 'blur(10px)',
+          borderLeft: '1px solid var(--border-primary)',
+          zIndex: 100,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '14px',
+          boxSizing: 'border-box',
+          boxShadow: '-8px 0 24px rgba(0, 0, 0, 0.5)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, borderBottom: '1px solid var(--border-primary)', paddingBottom: 8 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent-yellow)', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-sans)', letterSpacing: '0.5px' }}>
+              ⚡ Attack Payloads
+            </span>
+            <button
+              onClick={() => setShowPayloads(false)}
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}
+              title="Close Panel"
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {payloads.map((cat, idx) => (
+              <div key={idx}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.5px' }}>
+                  {cat.category}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {cat.items.map((item, i) => (
+                    <button
+                      key={i}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(item.value);
+                          setPayloadCopied(item.value);
+                          setTimeout(() => setPayloadCopied(null), 1500);
+                        } catch {}
+                      }}
+                      style={{
+                        textAlign: 'left',
+                        background: payloadCopied === item.value ? 'rgba(0, 255, 136, 0.05)' : 'var(--bg-darker)',
+                        border: payloadCopied === item.value ? '1px solid var(--accent-green)' : '1px solid var(--border-primary)',
+                        borderRadius: 4,
+                        padding: '6px 10px',
+                        color: payloadCopied === item.value ? 'var(--accent-green)' : 'var(--text-primary)',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        fontFamily: 'var(--font-sans)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}
+                      title={`Copy Payload: ${item.value}`}
+                    >
+                      <span style={{ fontWeight: 500 }}>{item.name}</span>
+                      <span style={{ fontSize: 10 }}>
+                        {payloadCopied === item.value ? '✓' : '📋'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

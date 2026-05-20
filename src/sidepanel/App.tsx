@@ -10,14 +10,14 @@ import Settings from './components/Settings';
 import ToolsPanel from './components/ToolsPanel';
 
 type MainTab = 'network' | 'chat' | 'tools' | 'settings';
-type NetworkSubTab = 'history' | 'requester';
+type NetworkSubTab = 'history' | 'tagged' | 'requester';
 
 export default function App() {
   const [activeMainTab, setActiveMainTab] = useState<MainTab>('network');
   const [activeNetworkTab, setActiveNetworkTab] = useState<NetworkSubTab>('history');
   
   // Tools bridging states
-  const [toolsInitialTab, setToolsInitialTab] = useState<'base64' | 'jwt'>('base64');
+  const [toolsInitialTab, setToolsInitialTab] = useState<'base64' | 'jwt' | null>(null);
   const [toolsInitialBase64Text, setToolsInitialBase64Text] = useState('');
   const [toolsInitialJwtText, setToolsInitialJwtText] = useState('');
   
@@ -44,6 +44,10 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [filterDomain, setFilterDomain] = useState('');
 
+  // Multi-select bulk actions
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   // Custom Dropdown UI States
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
   const [showMethodDropdown, setShowMethodDropdown] = useState(false);
@@ -64,7 +68,7 @@ export default function App() {
 
   // Listen for new requests from service worker
   useEffect(() => {
-    const listener = (message: { type: string; payload: CapturedRequest }) => {
+    const listener = (message: { type: string; payload: any }) => {
       if (message.type === 'REQUEST_CAPTURED') {
         setRequests(prev => {
           const existing = prev.findIndex(r => r.id === message.payload.id);
@@ -82,6 +86,14 @@ export default function App() {
           }
           return prev;
         });
+      } else if (message.type === 'REQUEST_DELETED') {
+        const { id } = message.payload;
+        setRequests(prev => prev.filter(r => r.id !== id));
+        setSelectedRequest(prev => prev && prev.id === id ? null : prev);
+      } else if (message.type === 'FILTERED_REQUESTS_DELETED') {
+        const { ids } = message.payload;
+        setRequests(prev => prev.filter(r => !ids.includes(r.id)));
+        setSelectedRequest(prev => prev && ids.includes(prev.id) ? null : prev);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -124,7 +136,14 @@ export default function App() {
   }, []);
 
   const handleSelectRequest = useCallback((req: CapturedRequest) => {
-    if (compareMode) {
+    if (selectMode) {
+      setSelectedIds(prev => {
+        if (prev.includes(req.id)) {
+          return prev.filter(id => id !== req.id);
+        }
+        return [...prev, req.id];
+      });
+    } else if (compareMode) {
       setSelectedForCompare(prev => {
         const exists = prev.some(r => r.id === req.id);
         if (exists) {
@@ -138,12 +157,14 @@ export default function App() {
     } else {
       setSelectedRequest(req);
     }
-  }, [compareMode]);
+  }, [selectMode, compareMode]);
 
   const handleClearRequests = useCallback(() => {
-    chrome.runtime.sendMessage({ type: 'CLEAR_REQUESTS' });
-    setRequests([]);
-    setSelectedRequest(null);
+    if (confirm('Clear all captured requests permanently?')) {
+      chrome.runtime.sendMessage({ type: 'CLEAR_REQUESTS' });
+      setRequests([]);
+      setSelectedRequest(null);
+    }
   }, []);
 
   const handleExportSession = useCallback(() => {
@@ -203,6 +224,7 @@ export default function App() {
       name: name.trim(),
       createdAt: Date.now(),
       targetScope: '',
+      excludeScope: '',
       customHeaders: [],
     };
 
@@ -283,8 +305,97 @@ export default function App() {
       }
     }
 
+    // 6. Tagged & Notes Filter for the Tagged Sub-Tab
+    if (activeNetworkTab === 'tagged') {
+      const hasTag = r.tag && r.tag !== 'none';
+      const hasNotes = r.notes && r.notes.trim() !== '';
+      if (!hasTag && !hasNotes) return false;
+    }
+
     return true;
-  });
+  }).slice().reverse();
+
+  const handleDeleteFilteredRequests = useCallback(() => {
+    if (filteredRequests.length === 0) return;
+    const msg = `Delete all ${filteredRequests.length} filtered requests permanently?`;
+    if (confirm(msg)) {
+      const ids = filteredRequests.map(r => r.id);
+      chrome.runtime.sendMessage({ type: 'DELETE_FILTERED_REQUESTS', payload: { ids } });
+      setRequests(prev => prev.filter(r => !ids.includes(r.id)));
+      setSelectedRequest(prev => prev && ids.includes(prev.id) ? null : prev);
+    }
+  }, [filteredRequests]);
+
+  const handleDeleteSelectedRequests = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    const msg = `Delete all ${selectedIds.length} selected requests permanently?`;
+    if (confirm(msg)) {
+      chrome.runtime.sendMessage({ type: 'DELETE_FILTERED_REQUESTS', payload: { ids: selectedIds } });
+      setRequests(prev => prev.filter(r => !selectedIds.includes(r.id)));
+      setSelectedRequest(prev => prev && selectedIds.includes(prev.id) ? null : prev);
+      setSelectedIds([]);
+    }
+  }, [selectedIds]);
+
+  // Keyboard arrow keys navigation for request list
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only navigate when active main tab is network and we're looking at history/tagged
+      if (activeMainTab !== 'network' || (activeNetworkTab !== 'history' && activeNetworkTab !== 'tagged')) {
+        return;
+      }
+
+      // Check if user is typing in any inputs/textarea
+      const activeEl = document.activeElement;
+      if (activeEl && (
+        activeEl.tagName === 'INPUT' || 
+        activeEl.tagName === 'TEXTAREA' || 
+        activeEl.getAttribute('contenteditable') === 'true'
+      )) {
+        return;
+      }
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (filteredRequests.length === 0) return;
+        
+        e.preventDefault(); // Prevent standard page scrolling
+
+        let newSelected: CapturedRequest | null = null;
+        const currentIndex = selectedRequest 
+          ? filteredRequests.findIndex(r => r.id === selectedRequest.id) 
+          : -1;
+
+        if (e.key === 'ArrowDown') {
+          if (currentIndex === -1) {
+            newSelected = filteredRequests[0];
+          } else if (currentIndex < filteredRequests.length - 1) {
+            newSelected = filteredRequests[currentIndex + 1];
+          }
+        } else if (e.key === 'ArrowUp') {
+          if (currentIndex === -1) {
+            newSelected = filteredRequests[filteredRequests.length - 1];
+          } else if (currentIndex > 0) {
+            newSelected = filteredRequests[currentIndex - 1];
+          }
+        }
+
+        if (newSelected) {
+          handleSelectRequest(newSelected);
+          
+          // Smooth scroll to the newly selected element in the request list
+          setTimeout(() => {
+            const selectedElement = document.querySelector('.request-item.selected');
+            if (selectedElement) {
+              selectedElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+          }, 0);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeMainTab, activeNetworkTab, filteredRequests, selectedRequest, handleSelectRequest]);
 
   return (
     <div className="app">
@@ -299,18 +410,18 @@ export default function App() {
                 background: 'rgba(255, 255, 255, 0.04)',
                 border: '1px solid var(--border-color)',
                 color: 'var(--text-primary)',
-                fontSize: 11,
-                padding: '4px 10px',
+                fontSize: 13,
+                padding: '5px 12px',
                 borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer',
-                fontWeight: 600,
+                fontWeight: 650,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6
               }}
             >
               <span>{(settings.projects || []).find(p => p.id === (settings.currentProjectId || 'default'))?.name || 'Default Project'}</span>
-              <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>▼</span>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▼</span>
             </button>
             {showProjectDropdown && (
               <div style={{
@@ -323,7 +434,7 @@ export default function App() {
                 borderRadius: 'var(--radius-sm)',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
                 zIndex: 100000,
-                minWidth: 150,
+                minWidth: 160,
                 overflow: 'hidden'
               }}>
                 {(settings.projects || []).map(p => (
@@ -334,8 +445,8 @@ export default function App() {
                       setShowProjectDropdown(false);
                     }}
                     style={{
-                      padding: '8px 12px',
-                      fontSize: 11,
+                      padding: '10px 14px',
+                      fontSize: 13,
                       cursor: 'pointer',
                       color: settings.currentProjectId === p.id ? 'var(--accent-cyan)' : 'var(--text-primary)',
                       background: settings.currentProjectId === p.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
@@ -482,6 +593,12 @@ export default function App() {
               Requests History
             </button>
             <button 
+              className={`sub-tab-btn ${activeNetworkTab === 'tagged' ? 'active' : ''}`}
+              onClick={() => setActiveNetworkTab('tagged')}
+            >
+              🎯 Tagged & Notes ({requests.filter(r => (r.tag && r.tag !== 'none') || (r.notes && r.notes.trim() !== '')).length})
+            </button>
+            <button 
               className={`sub-tab-btn ${activeNetworkTab === 'requester' ? 'active' : ''}`}
               onClick={() => setActiveNetworkTab('requester')}
             >
@@ -491,7 +608,7 @@ export default function App() {
 
           {/* Network Sub-Tab Content */}
           <div className="sub-tab-content">
-            <div style={{ display: activeNetworkTab === 'history' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+            <div style={{ display: (activeNetworkTab === 'history' || activeNetworkTab === 'tagged') ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
               
               {/* SEARCH BAR */}
               <div className="filter-bar">
@@ -506,28 +623,91 @@ export default function App() {
                   onChange={e => setFilter(e.target.value)}
                 />
                 {requests.length > 0 && (
-                  <span style={{ color: 'var(--text-muted)', fontSize: 10, whiteSpace: 'nowrap', marginRight: 6 }}>
-                    {filteredRequests.length}/{requests.length}
+                  <span style={{ color: 'var(--text-muted)', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', marginRight: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>{filteredRequests.length}/{requests.length}</span>
+                    {filteredRequests.length < requests.length && (
+                      <button
+                        onClick={handleDeleteFilteredRequests}
+                        title={`Purge all ${filteredRequests.length} filtered requests matching current criteria`}
+                        style={{
+                          background: 'rgba(255, 51, 102, 0.15)',
+                          border: '1px solid var(--accent-red)',
+                          color: 'var(--accent-red)',
+                          borderRadius: 4,
+                          padding: '2px 6px',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 2,
+                          transition: 'all 0.15s ease',
+                          whiteSpace: 'nowrap'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'var(--accent-red)';
+                          e.currentTarget.style.color = '#fff';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(255, 51, 102, 0.15)';
+                          e.currentTarget.style.color = 'var(--accent-red)';
+                        }}
+                      >
+                        🗑️ Purge Filtered
+                      </button>
+                    )}
                   </span>
                 )}
+                <button
+                  className={`filter-chip ${selectMode ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectMode(!selectMode);
+                    setSelectedIds([]);
+                    setCompareMode(false);
+                    setSelectedRequest(null);
+                  }}
+                  style={{
+                    padding: '5px 12px',
+                    fontSize: 12,
+                    borderRadius: 4,
+                    border: '1px solid var(--border-color)',
+                    background: selectMode ? 'rgba(0, 229, 255, 0.1)' : 'transparent',
+                    color: selectMode ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    borderColor: selectMode ? 'var(--accent-cyan)' : 'var(--border-color)',
+                    whiteSpace: 'nowrap',
+                    height: 30,
+                    display: 'flex',
+                    alignItems: 'center',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  ☑ Select {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}
+                </button>
                 <button
                   className={`filter-chip ${compareMode ? 'active' : ''}`}
                   onClick={() => {
                     setCompareMode(!compareMode);
                     setSelectedForCompare([]);
                     setSelectedRequest(null);
+                    setSelectMode(false);
                   }}
                   style={{
-                    padding: '2px 8px',
-                    fontSize: 10,
+                    padding: '5px 12px',
+                    fontSize: 12,
                     borderRadius: 4,
                     border: '1px solid var(--border-color)',
                     background: compareMode ? 'rgba(0, 229, 255, 0.1)' : 'transparent',
                     color: compareMode ? 'var(--accent-cyan)' : 'var(--text-secondary)',
                     cursor: 'pointer',
-                    fontWeight: 600,
+                    fontWeight: 700,
                     borderColor: compareMode ? 'var(--accent-cyan)' : 'var(--border-color)',
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
+                    height: 30,
+                    display: 'flex',
+                    alignItems: 'center',
+                    boxSizing: 'border-box'
                   }}
                 >
                   ⚔️ Compare
@@ -535,7 +715,7 @@ export default function App() {
               </div>
 
               {/* ADVANCED FILTER BAR */}
-              <div className="filter-options" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="filter-options" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 14px' }}>
                 
                 {/* 1. Method Dropdown */}
                 <div style={{ position: 'relative' }}>
@@ -549,20 +729,20 @@ export default function App() {
                       background: 'var(--bg-secondary)',
                       border: '1px solid var(--border-color)',
                       color: 'var(--text-secondary)',
-                      fontSize: 10,
-                      padding: '4px 8px',
+                      fontSize: 12.5,
+                      padding: '6px 12px',
                       borderRadius: 4,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 4,
-                      fontWeight: 600,
-                      height: 22,
+                      gap: 6,
+                      fontWeight: 700,
+                      height: 30,
                       boxSizing: 'border-box'
                     }}
                   >
                     <span>Method: {filterMethod === 'ALL' ? 'All' : filterMethod}</span>
-                    <span style={{ fontSize: 7, color: 'var(--text-muted)' }}>▼</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▼</span>
                   </button>
                   {showMethodDropdown && (
                     <div style={{
@@ -575,7 +755,7 @@ export default function App() {
                       borderRadius: 'var(--radius-sm)',
                       boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
                       zIndex: 100000,
-                      minWidth: 110,
+                      minWidth: 130,
                       overflow: 'hidden'
                     }}>
                       {['ALL', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].map(m => (
@@ -586,8 +766,8 @@ export default function App() {
                             setShowMethodDropdown(false);
                           }}
                           style={{
-                            padding: '6px 10px',
-                            fontSize: 10,
+                            padding: '8px 12px',
+                            fontSize: 12.5,
                             cursor: 'pointer',
                             color: filterMethod === m ? 'var(--accent-cyan)' : 'var(--text-primary)',
                             background: filterMethod === m ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
@@ -615,20 +795,20 @@ export default function App() {
                       background: 'var(--bg-secondary)',
                       border: '1px solid var(--border-color)',
                       color: 'var(--text-secondary)',
-                      fontSize: 10,
-                      padding: '4px 8px',
+                      fontSize: 12.5,
+                      padding: '6px 12px',
                       borderRadius: 4,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 4,
-                      fontWeight: 600,
-                      height: 22,
+                      gap: 6,
+                      fontWeight: 700,
+                      height: 30,
                       boxSizing: 'border-box'
                     }}
                   >
                     <span>Scheme: {filterScheme === 'ALL' ? 'All' : filterScheme}</span>
-                    <span style={{ fontSize: 7, color: 'var(--text-muted)' }}>▼</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▼</span>
                   </button>
                   {showSchemeDropdown && (
                     <div style={{
@@ -641,7 +821,7 @@ export default function App() {
                       borderRadius: 'var(--radius-sm)',
                       boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
                       zIndex: 100000,
-                      minWidth: 110,
+                      minWidth: 120,
                       overflow: 'hidden'
                     }}>
                       {['ALL', 'HTTP', 'HTTPS'].map(s => (
@@ -652,8 +832,8 @@ export default function App() {
                             setShowSchemeDropdown(false);
                           }}
                           style={{
-                            padding: '6px 10px',
-                            fontSize: 10,
+                            padding: '8px 12px',
+                            fontSize: 12.5,
                             cursor: 'pointer',
                             color: filterScheme === s ? 'var(--accent-cyan)' : 'var(--text-primary)',
                             background: filterScheme === s ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
@@ -681,20 +861,20 @@ export default function App() {
                       background: 'var(--bg-secondary)',
                       border: '1px solid var(--border-color)',
                       color: 'var(--text-secondary)',
-                      fontSize: 10,
-                      padding: '4px 8px',
+                      fontSize: 12.5,
+                      padding: '6px 12px',
                       borderRadius: 4,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 4,
-                      fontWeight: 600,
-                      height: 22,
+                      gap: 6,
+                      fontWeight: 700,
+                      height: 30,
                       boxSizing: 'border-box'
                     }}
                   >
                     <span>Status: {filterStatus === 'ALL' ? 'All' : filterStatus}</span>
-                    <span style={{ fontSize: 7, color: 'var(--text-muted)' }}>▼</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▼</span>
                   </button>
                   {showStatusDropdown && (
                     <div style={{
@@ -707,7 +887,7 @@ export default function App() {
                       borderRadius: 'var(--radius-sm)',
                       boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
                       zIndex: 100000,
-                      minWidth: 130,
+                      minWidth: 150,
                       overflow: 'hidden'
                     }}>
                       {[
@@ -724,8 +904,8 @@ export default function App() {
                             setShowStatusDropdown(false);
                           }}
                           style={{
-                            padding: '6px 10px',
-                            fontSize: 10,
+                            padding: '8px 12px',
+                            fontSize: 12.5,
                             cursor: 'pointer',
                             color: filterStatus === st.value ? 'var(--accent-cyan)' : 'var(--text-primary)',
                             background: filterStatus === st.value ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
@@ -746,17 +926,97 @@ export default function App() {
                   placeholder="Domain/Subdomain..."
                   value={filterDomain}
                   onChange={e => setFilterDomain(e.target.value)}
+                  style={{
+                    height: 30,
+                    boxSizing: 'border-box'
+                  }}
                 />
               </div>
 
               {/* LIST & DETAIL */}
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
                 <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  {selectMode && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '8px 12px',
+                      background: 'rgba(0, 229, 255, 0.05)',
+                      borderBottom: '1px solid var(--border-color)',
+                      flexWrap: 'wrap'
+                    }}>
+                      <span style={{ fontSize: 12, color: 'var(--accent-cyan)', fontWeight: 700 }}>
+                        Selected: {selectedIds.length}/{filteredRequests.length}
+                      </span>
+                      
+                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => {
+                            if (selectedIds.length === filteredRequests.length) {
+                              setSelectedIds([]);
+                            } else {
+                              setSelectedIds(filteredRequests.map(r => r.id));
+                            }
+                          }}
+                          style={{
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-color)',
+                            color: 'var(--text-primary)',
+                            borderRadius: 4,
+                            padding: '3px 8px',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {selectedIds.length === filteredRequests.length ? '⬜ Deselect All' : '☑ Select All'}
+                        </button>
+                        
+                        <button
+                          onClick={handleDeleteSelectedRequests}
+                          disabled={selectedIds.length === 0}
+                          style={{
+                            background: selectedIds.length === 0 ? 'rgba(255, 51, 102, 0.05)' : 'rgba(255, 51, 102, 0.15)',
+                            border: '1px solid var(--accent-red)',
+                            color: 'var(--accent-red)',
+                            borderRadius: 4,
+                            padding: '3px 8px',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer',
+                            opacity: selectedIds.length === 0 ? 0.5 : 1
+                          }}
+                        >
+                          🗑️ Delete Selected ({selectedIds.length})
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setSelectMode(false);
+                            setSelectedIds([]);
+                          }}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            fontSize: 10,
+                            cursor: 'pointer',
+                            padding: '3px 6px'
+                          }}
+                        >
+                          ✕ Close
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <RequestList
                     requests={filteredRequests}
                     selected={selectedRequest}
                     selectedList={selectedForCompare}
                     onSelect={handleSelectRequest}
+                    selectMode={selectMode}
+                    selectedIds={selectedIds}
                   />
                 </div>
                 

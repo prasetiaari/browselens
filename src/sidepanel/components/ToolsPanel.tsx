@@ -53,15 +53,27 @@ function md5(str: string): string {
   }
   return hex;
 }
+function normalizeJsUrl(urlStr: string): string {
+  try {
+    const url = new URL(urlStr);
+    url.search = '';
+    url.hash = '';
+    let pathname = url.pathname;
+    pathname = pathname.replace(/[.-][a-zA-Z0-9_-]{6,30}(?=\.js$)/, '');
+    return url.origin + pathname;
+  } catch {
+    return urlStr.split('?')[0];
+  }
+}
 
 interface Props {
-  initialTab?: 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | 'graphql' | null;
+  initialTab?: 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | 'graphql' | 'jsauditor' | null;
   initialBase64?: string;
   initialJwt?: string;
   requests?: CapturedRequest[];
 }
 
-type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | 'graphql';
+type ToolType = 'base64' | 'jwt' | 'encoder' | 'csrf' | 'urlparser' | 'crypto' | 'ssrf' | 'highlighter' | 'graphql' | 'jsauditor';
 
 export default function ToolsPanel({ initialTab = null, initialBase64 = '', initialJwt = '', requests = [] }: Props) {
   // activeTool can be null (Dashboard grid) or a specific ToolType (Fullscreen popup overlay)
@@ -122,6 +134,156 @@ export default function ToolsPanel({ initialTab = null, initialBase64 = '', init
   const [selectedGraphqlReqId, setSelectedGraphqlReqId] = useState<string | null>(null);
   const [graphqlTab, setGraphqlTab] = useState<'live' | 'history'>('live');
   const [sessionStartTime] = useState(() => Date.now());
+
+  // --- 10. JS Source Auditor States, Helpers & Downloader Routines ---
+  const [selectedJsReqId, setSelectedJsReqId] = useState<string | null>(null);
+  const [jsTab, setJsTab] = useState<'secrets' | 'endpoints' | 'vulns' | 'code'>('secrets');
+  const [customJsInput, setCustomJsInput] = useState('');
+  const [fetchingJsId, setFetchingJsId] = useState<string | null>(null);
+  const [bulkFetching, setBulkFetching] = useState(false);
+  const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+
+  // Static secrets extraction patterns
+  const scanSecrets = (code: string) => {
+    const results: { label: string; value: string; match: string }[] = [];
+    const patterns = [
+      { label: 'AWS Access Key ID', regex: /AKIA[0-9A-Z]{16}/g },
+      { label: 'AWS Secret Access Key', regex: /[^A-Za-z0-9/+=]([A-Za-z0-9/+=]{40})[^A-Za-z0-9/+=]/g },
+      { label: 'Google API Key / Firebase', regex: /AIzaSy[A-Za-z0-9_-]{33}/g },
+      { label: 'Slack Webhook', regex: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9_]+\/B[A-Z0-9_]+\/[A-Za-z0-9_]+/g },
+      { label: 'Generic Bearer Token', regex: /bearer\s+["'\`]?([A-Za-z0-9\-._~\+\/]+=*)["'\`]?/gi },
+      { label: 'Mailgun API Key', regex: /key-[0-9a-f]{32}/g },
+      { label: 'Stripe API Key', regex: /sk_live_[0-9a-zA-Z]{24}/g },
+      { label: 'S3 Cloud Storage Bucket', regex: /[a-z0-9.-]+\.s3\.amazonaws\.com/g },
+      { label: 'Database Connection String', regex: /(mongodb|postgres|mysql|redis|amqp):\/\/[A-Za-z0-9_.:-]+@[A-Za-z0-9.-]+/gi },
+      { label: 'JWT Authentication Token', regex: /ey[A-Za-z0-9_-]{10,}\.ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g }
+    ];
+
+    patterns.forEach(p => {
+      let match;
+      p.regex.lastIndex = 0; // reset RegExp index state
+      while ((match = p.regex.exec(code)) !== null) {
+        const fullMatch = match[0];
+        const val = match[1] || fullMatch;
+        // Prevent duplicate logs
+        if (!results.some(r => r.value === val)) {
+          results.push({ label: p.label, value: val, match: fullMatch.substring(0, 100) });
+        }
+      }
+    });
+
+    return results;
+  };
+
+  // Static API endpoints extraction patterns
+  const extractEndpoints = (code: string) => {
+    const results: { path: string; match: string }[] = [];
+    // Catch relative endpoint patterns (/api/v1/..., /auth/...)
+    const relativeRegex = /"(\/(?:api|v[0-9]|auth|user|settings|admin|get|post|delete|update)[A-Za-z0-9_./-]*)"/g;
+    // Catch absolute external/subdomain HTTP patterns
+    const absoluteRegex = /"(https?:\/\/[A-Za-z0-9_.-]+\.[a-z]{2,6}(?:\/[A-Za-z0-9_./-]*)*)"/g;
+
+    let match;
+    relativeRegex.lastIndex = 0;
+    while ((match = relativeRegex.exec(code)) !== null) {
+      const path = match[1];
+      if (path.length > 2 && !results.some(r => r.path === path)) {
+        results.push({ path, match: match[0] });
+      }
+    }
+
+    absoluteRegex.lastIndex = 0;
+    while ((match = absoluteRegex.exec(code)) !== null) {
+      const path = match[1];
+      if (path.length > 2 && !results.some(r => r.path === path)) {
+        results.push({ path, match: match[0] });
+      }
+    }
+
+    return results;
+  };
+
+  // Client-Side Dangerous Functions Auditing
+  const findDangerousFunctions = (code: string) => {
+    const results: { label: string; codeSnippet: string; desc: string }[] = [];
+    const signatures = [
+      { label: 'Unsafe eval() execution', regex: /eval\s*\(/g, desc: 'Executes text strings as JS code, enabling Cross-Site Scripting (XSS).' },
+      { label: 'Unsafe DOM writing (innerHTML)', regex: /\.innerHTML\s*=/g, desc: 'Direct raw HTML injection can lead to DOM-based XSS if inputs are unescaped.' },
+      { label: 'Dynamic timer execution', regex: /(setTimeout|setInterval)\s*\(\s*["'\`]/g, desc: 'Passing strings to timers acts identically to eval() and poses injection risks.' },
+      { label: 'Unsafe dynamic scripts creation', regex: /document\.createElement\s*\(\s*['"\`]script['"\`]\s*\)/g, desc: 'Dynamically generated scripts allow remote external JS payload inclusion.' },
+      { label: 'Insecure postMessage listener', regex: /\.addEventListener\s*\(\s*['"\`]message['"\`]/g, desc: 'Requires origin checking during messages reception to prevent cross-origin takeover.' }
+    ];
+
+    signatures.forEach(sig => {
+      let match;
+      sig.regex.lastIndex = 0;
+      while ((match = sig.regex.exec(code)) !== null) {
+        const start = Math.max(0, match.index - 40);
+        const end = Math.min(code.length, match.index + sig.label.length + 50);
+        const snippet = code.substring(start, end).replace(/\s+/g, ' ').trim();
+        results.push({
+          label: sig.label,
+          codeSnippet: `... ${snippet} ...`,
+          desc: sig.desc
+        });
+      }
+    });
+
+    return results;
+  };
+
+  // Background silent fetch bypass
+  const fetchJsSource = async (id: string, url: string) => {
+    setFetchingJsId(id);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.text();
+      // Store in project database
+      chrome.runtime.sendMessage({
+        type: 'UPDATE_REQUEST_BODY',
+        payload: { id, responseBody: body }
+      });
+    } catch (err) {
+      console.error('[BrowseLens] Background fetch failed for:', url, err);
+      alert(`Silent downloader failed: ${err instanceof Error ? err.message : String(err)}. Check browser console or network tab.`);
+    } finally {
+      setFetchingJsId(null);
+    }
+  };
+
+  // Asynchronous parallel harvester
+  const fetchAndAuditAllJs = async (jsRequests: CapturedRequest[]) => {
+    const emptyJs = jsRequests.filter(r => !r.responseBody || r.responseBody.startsWith('[Response body discarded'));
+    if (emptyJs.length === 0) {
+      alert('All scripts are already downloaded and audited!');
+      return;
+    }
+    setBulkFetching(true);
+    try {
+      await Promise.all(
+        emptyJs.map(r => 
+          fetch(r.url)
+            .then(res => {
+              if (res.ok) return res.text();
+              throw new Error(`HTTP ${res.status}`);
+            })
+            .then(body => {
+              chrome.runtime.sendMessage({
+                type: 'UPDATE_REQUEST_BODY',
+                payload: { id: r.id, responseBody: body }
+              });
+            })
+            .catch(err => console.warn(`Bulk download failed for ${r.url}:`, err))
+        )
+      );
+      alert(`Bulk Harvest completed! Synchronized ${emptyJs.length} JS file downloads.`);
+    } catch (err) {
+      console.error('[BrowseLens] Parallel bulk harvest failed:', err);
+    } finally {
+      setBulkFetching(false);
+    }
+  };
 
   const getGraphqlDetails = (req: CapturedRequest) => {
     let operationName = 'Anonymous';
@@ -566,9 +728,9 @@ ${formInputs}
     { id: 'csrf', label: 'CSRF Exploit Builder', icon: '📝', desc: 'Build and compile auto-submit exploit pages instantly.' },
     { id: 'urlparser', label: 'URL Query Parser', icon: '🎯', desc: 'Dissect, manipulate, and send rebuilt URLs to Repeater.' },
     { id: 'crypto', label: 'Crypto Hash offline', icon: '🔑', desc: 'Generate offline MD5, SHA-1, SHA-256 and SHA-512.' },
-    { id: 'ssrf', label: 'SSRF Host Bypasser', icon: '🚀', desc: 'Obfuscate localhost IPs into decimal, octal and wildcard domains.' },
     { id: 'highlighter', label: 'DOM Visual Highlighter', icon: '🎯', desc: 'Scan and visually highlight all forms & links on the active page.' },
-    { id: 'graphql', label: 'GraphQL Traffic Analyzer', icon: '🧬', desc: 'Auto-discover GraphQL operations, query types, variables, and audit introspection vulnerabilities.' }
+    { id: 'graphql', label: 'GraphQL Traffic Analyzer', icon: '🧬', desc: 'Auto-discover GraphQL operations, query types, variables, and audit introspection vulnerabilities.' },
+    { id: 'jsauditor', label: 'JS Source Auditor & Leak Finder', icon: '🔍', desc: 'Auto-scan static scripts dynamically. Dissect AWS tokens, relative APIs, and find client-side vulnerabilities.' }
   ] as const;
 
   return (
@@ -588,47 +750,105 @@ ${formInputs}
 
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr',
-            gap: 10,
-            overflowY: 'auto'
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 16,
+            overflowY: 'visible',
+            paddingBottom: 40,
+            paddingTop: 10
           }}>
-            {toolsList.map(t => (
-              <div
-                key={t.id}
-                onClick={() => setActiveTool(t.id)}
-                style={{
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--border-primary)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: 12,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                }}
-                className="tool-dashboard-card"
-              >
-                <div style={{
-                  fontSize: 28,
-                  background: 'var(--bg-secondary)',
-                  width: 50,
-                  height: 50,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 'var(--radius-sm)',
-                  border: '1px solid rgba(0,229,255,0.1)'
-                }}>
-                  {t.icon}
+            {toolsList.map(t => {
+              const isHovered = t.id === hoveredCardId;
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => setActiveTool(t.id)}
+                  onMouseEnter={() => setHoveredCardId(t.id)}
+                  onMouseLeave={() => setHoveredCardId(null)}
+                  style={{
+                    background: isHovered 
+                      ? 'rgba(0, 120, 215, 0.15)' 
+                      : 'transparent',
+                    border: isHovered 
+                      ? '1px solid rgba(0, 120, 215, 0.45)' 
+                      : '1px solid transparent',
+                    borderRadius: 6,
+                    padding: '16px 8px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 10,
+                    transition: 'all 0.15s ease',
+                    position: 'relative',
+                    textAlign: 'center',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  {/* Icon representation resembling a desktop shortcut */}
+                  <div style={{
+                    fontSize: 46,
+                    background: isHovered ? 'rgba(0, 120, 215, 0.22)' : 'rgba(255, 255, 255, 0.02)',
+                    width: 80,
+                    height: 80,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 8,
+                    border: `1px solid ${isHovered ? 'rgba(0, 120, 215, 0.35)' : 'rgba(255, 255, 255, 0.04)'}`,
+                    transition: 'transform 0.15s ease',
+                    transform: isHovered ? 'scale(1.08)' : 'scale(1)',
+                    boxShadow: isHovered ? '0 0 12px rgba(0, 120, 215, 0.35)' : 'none'
+                  }}>
+                    {t.icon}
+                  </div>
+
+                  {/* Desktop label below icon */}
+                  <span style={{ 
+                    fontSize: 12, 
+                    fontWeight: 700,
+                    color: isHovered ? '#00e5ff' : 'var(--text-primary)',
+                    lineHeight: '1.35',
+                    wordBreak: 'break-word',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                    transition: 'color 0.15s ease'
+                  }}>
+                    {t.label}
+                  </span>
+
+                  {/* Windows Infotip-style Tooltip popup */}
+                  {isHovered && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      marginTop: 8,
+                      background: 'rgba(15, 23, 42, 0.97)',
+                      border: '1px solid rgba(0, 229, 255, 0.38)',
+                      borderRadius: 6,
+                      padding: '8px 12px',
+                      width: 170,
+                      color: '#e2e8f0',
+                      fontSize: 10.5,
+                      lineHeight: '1.45',
+                      textAlign: 'left',
+                      zIndex: 999999,
+                      boxShadow: '0 6px 20px rgba(0,0,0,0.7), 0 0 10px rgba(0,229,255,0.15)',
+                      pointerEvents: 'none'
+                    }}>
+                      <div style={{ fontWeight: 800, color: 'var(--accent-cyan)', marginBottom: 4, fontSize: 11, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 2 }}>
+                        {t.label}
+                      </div>
+                      {t.desc}
+                    </div>
+                  )}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: '0 0 2px 0', fontSize: 12, color: 'var(--text-primary)' }}>{t.label}</h4>
-                  <p style={{ margin: 0, fontSize: 10, color: 'var(--text-muted)', lineHeight: '1.3' }}>{t.desc}</p>
-                </div>
-                <div style={{ color: 'var(--accent-cyan)', fontSize: 14 }}>➔</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -1556,7 +1776,481 @@ ${formInputs}
                     )}
 
                   </div>
+                </div>
+              );
+            })()}
 
+            {/* 2c. JS Source Auditor Workspace Layout */}
+            {activeTool === 'jsauditor' && (() => {
+              // Get all capture scripts from request list
+              const jsRequests = requests.filter(r => {
+                const url = (r.url || '').toLowerCase();
+                const mime = (r.mimeType || '').toLowerCase();
+                return url.endsWith('.js') || url.includes('.js?') || mime.includes('javascript') || mime.includes('x-javascript');
+              });
+
+              // Deduplicate by normalized URL signature to prevent listing duplicates
+              const uniqueJsRequests: CapturedRequest[] = [];
+              jsRequests.forEach(r => {
+                const norm = normalizeJsUrl(r.url);
+                if (!uniqueJsRequests.some(u => normalizeJsUrl(u.url) === norm)) {
+                  uniqueJsRequests.push(r);
+                }
+              });
+
+              // Resolve selected JS script request details
+              const selectedReq = selectedJsReqId 
+                ? jsRequests.find(r => r.id === selectedJsReqId) 
+                : null;
+
+              // If custom code editor content is supplied, audit that instead
+              const activeCode = customJsInput || (selectedReq?.responseBody || '');
+              const hasEmptyBody = selectedReq && (!selectedReq.responseBody || selectedReq.responseBody.startsWith('[Response body discarded'));
+
+              const secretsList = activeCode ? scanSecrets(activeCode) : [];
+              const endpointsList = activeCode ? extractEndpoints(activeCode) : [];
+              const vulnsList = activeCode ? findDangerousFunctions(activeCode) : [];
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 50px)', padding: 16, boxSizing: 'border-box', overflow: 'hidden' }}>
+                  
+                  {/* Dashboard Header Bar */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div>
+                      <h3 style={{ margin: '0 0 4px 0', fontSize: 16, color: 'var(--accent-cyan)' }}>🔍 Client-Side Static Analysis</h3>
+                      <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-muted)' }}>Scan JavaScript assets, extract relative endpoints, and check secrets leakage in real time.</p>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        onClick={() => fetchAndAuditAllJs(jsRequests)}
+                        disabled={bulkFetching}
+                        className="tool-btn-primary"
+                        style={{
+                          background: 'linear-gradient(135deg, #00e5ff 0%, #0088ff 100%)',
+                          border: 'none',
+                          padding: '8px 16px',
+                          fontSize: 11.5,
+                          fontWeight: 800,
+                          borderRadius: 4,
+                          color: '#000',
+                          cursor: 'pointer',
+                          opacity: bulkFetching ? 0.7 : 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                      >
+                        ⚡ {bulkFetching ? 'Downloading...' : 'Bulk Scan All JS'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
+                    
+                    {/* Left Column: Script bundle list */}
+                    <div style={{
+                      flex: 0.9,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                      overflowY: 'auto',
+                      maxHeight: 'calc(100vh - 120px)',
+                      paddingRight: 4
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-primary)', paddingBottom: 6 }}>
+                        <span>Captured Bundles ({uniqueJsRequests.length})</span>
+                        <span style={{ fontSize: 11 }}>Click script file to audit</span>
+                      </div>
+
+                      {uniqueJsRequests.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '40px 16px', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-primary)', borderRadius: 8, color: 'var(--text-muted)' }}>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📁</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>No JavaScript Assets Captured</div>
+                          <div style={{ fontSize: 11.5, lineHeight: 1.4 }}>Reload or browse the webpage to discover script sources.</div>
+                        </div>
+                      ) : (
+                        uniqueJsRequests.map(r => {
+                          const isSelected = r.id === selectedJsReqId;
+                          const hasBody = r.responseBody && !r.responseBody.startsWith('[Response body discarded');
+                          
+                          // Quick pre-computations for listing badges
+                          const previewCode = r.responseBody || '';
+                          const secCount = previewCode ? scanSecrets(previewCode).length : 0;
+                          const vulnCount = previewCode ? findDangerousFunctions(previewCode).length : 0;
+
+                          return (
+                            <div
+                              key={r.id}
+                              onClick={() => {
+                                setCustomJsInput('');
+                                setSelectedJsReqId(isSelected ? null : r.id);
+                              }}
+                              style={{
+                                background: isSelected ? 'rgba(0, 229, 255, 0.05)' : 'var(--bg-secondary)',
+                                border: `1px solid ${isSelected ? 'var(--accent-cyan)' : 'var(--border-primary)'}`,
+                                borderRadius: 6,
+                                padding: '12px 14px',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 8
+                              }}
+                              onMouseEnter={e => { if(!isSelected) e.currentTarget.style.border = '1px solid rgba(0, 229, 255, 0.3)'; }}
+                              onMouseLeave={e => { if(!isSelected) e.currentTarget.style.border = '1px solid var(--border-primary)'; }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ 
+                                  fontSize: 12.5, 
+                                  fontWeight: 700, 
+                                  color: isSelected ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                                  wordBreak: 'break-all',
+                                  textOverflow: 'ellipsis',
+                                  overflow: 'hidden',
+                                  whiteSpace: 'nowrap',
+                                  maxWidth: '75%'
+                                }}>
+                                  {(() => { try { return r.url.substring(r.url.lastIndexOf('/') + 1) || r.url; } catch { return r.url; } })()}
+                                </span>
+                                
+                                <span style={{
+                                  fontSize: 9.5,
+                                  fontWeight: 800,
+                                  padding: '3px 6px',
+                                  borderRadius: 4,
+                                  background: hasBody ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 184, 0, 0.1)',
+                                  color: hasBody ? '#00ff88' : '#ffb800',
+                                  border: `1px solid ${hasBody ? 'rgba(0, 255, 136, 0.2)' : 'rgba(255, 184, 0, 0.2)'}`
+                                }}>
+                                  {hasBody ? 'DOWNLOADED' : 'PENDING'}
+                                </span>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {secCount > 0 && (
+                                  <span style={{ fontSize: 9, fontWeight: 800, color: '#ff3366', background: 'rgba(255, 51, 102, 0.1)', padding: '2px 5px', borderRadius: 3, border: '1px solid rgba(255,51,102,0.2)' }}>
+                                    🔒 {secCount} SECRETS
+                                  </span>
+                                )}
+                                {vulnCount > 0 && (
+                                  <span style={{ fontSize: 9, fontWeight: 800, color: '#ffb800', background: 'rgba(255, 184, 0, 0.1)', padding: '2px 5px', borderRadius: 3, border: '1px solid rgba(255, 184, 0, 0.2)' }}>
+                                    ⚠️ {vulnCount} VULNS
+                                  </span>
+                                )}
+                              </div>
+
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--text-muted)' }}>
+                                <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '65%' }}>
+                                  {r.url}
+                                </span>
+                                <span>
+                                  {r.responseBodySize ? `${(r.responseBodySize / 1024).toFixed(1)} KB` : '0 KB'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Right Column: Code audit analysis split-pane */}
+                    <div style={{
+                      flex: 1.2,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                      overflowY: 'auto',
+                      maxHeight: 'calc(100vh - 120px)',
+                      background: 'rgba(255, 255, 255, 0.01)',
+                      border: '1px solid var(--border-primary)',
+                      borderRadius: 8,
+                      padding: 16
+                    }}>
+                      
+                      {/* Code Source Switcher Menu */}
+                      <div style={{ borderBottom: '1px solid var(--border-primary)', paddingBottom: 10 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 800 }}>Audit Analyzer</span>
+                          {selectedReq && (
+                            <span style={{ fontSize: 11.5, color: 'var(--accent-cyan)', fontFamily: 'monospace', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '65%' }}>
+                              {selectedReq.url}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Sandboxed Paste Container */}
+                        {!selectedReq && (
+                          <div style={{ marginTop: 8 }}>
+                            <label className="tool-inner-label" style={{ marginBottom: 4, display: 'block', fontSize: 12 }}>Or Paste Custom Script Snip:</label>
+                            <textarea
+                              value={customJsInput}
+                              onChange={e => setCustomJsInput(e.target.value)}
+                              placeholder="Paste obfuscated JS code or vendor scripts here to audit immediately offline..."
+                              style={{
+                                width: '100%',
+                                height: 75,
+                                background: 'var(--bg-primary)',
+                                border: '1px solid var(--border-primary)',
+                                borderRadius: 6,
+                                color: '#e2e8f0',
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                                padding: 10,
+                                boxSizing: 'border-box',
+                                resize: 'none'
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Silent downloader loader when asset is empty */}
+                      {selectedReq && hasEmptyBody && (
+                        <div style={{
+                          padding: '30px 16px',
+                          textAlign: 'center',
+                          background: 'rgba(255, 184, 0, 0.03)',
+                          border: '1px dashed rgba(255, 184, 0, 0.25)',
+                          borderRadius: 8,
+                          margin: '8px 0'
+                        }}>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📥</div>
+                          <h4 style={{ margin: '0 0 6px 0', fontSize: 13, fontWeight: 700, color: '#ffb800' }}>Empty/No Code Extracted</h4>
+                          <p style={{ margin: '0 0 12px 0', fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                            This script has discarded body data in permanent store. Enable silent downloader to fetch background bundle context now.
+                          </p>
+                          <button
+                            onClick={() => fetchJsSource(selectedReq.id, selectedReq.url)}
+                            disabled={fetchingJsId === selectedReq.id}
+                            className="tool-btn-primary"
+                            style={{
+                              background: '#ffb800',
+                              border: 'none',
+                              color: '#000',
+                              padding: '8px 16px',
+                              fontSize: 11.5,
+                              fontWeight: 800,
+                              borderRadius: 4,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {fetchingJsId === selectedReq.id ? 'Downloading...' : 'Download & Analyze Source Code'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Display Audit Findings Categories Tabs */}
+                      {(activeCode || selectedReq) && !hasEmptyBody && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
+                          
+                          {/* Segmented Control Buttons */}
+                          <div style={{ display: 'flex', background: 'var(--bg-primary)', padding: 3, borderRadius: 6, border: '1px solid var(--border-primary)' }}>
+                            {(['secrets', 'endpoints', 'vulns', 'code'] as const).map(tab => (
+                              <button
+                                key={tab}
+                                onClick={() => setJsTab(tab)}
+                                style={{
+                                  flex: 1,
+                                  background: jsTab === tab ? 'var(--bg-secondary)' : 'transparent',
+                                  border: 'none',
+                                  color: jsTab === tab ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                                  padding: '6px 0',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                  fontSize: 11.5,
+                                  fontWeight: 700,
+                                  textTransform: 'uppercase',
+                                  transition: 'all 0.2s ease'
+                                }}
+                              >
+                                {tab === 'secrets' && `🔒 Secrets (${secretsList.length})`}
+                                {tab === 'endpoints' && `🎯 Routes (${endpointsList.length})`}
+                                {tab === 'vulns' && `⚠️ Vulns (${vulnsList.length})`}
+                                {tab === 'code' && `📄 Code`}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Tab Content 1: Leaked Secrets Indicator */}
+                          {jsTab === 'secrets' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+                              {secretsList.length === 0 ? (
+                                <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, border: '1px dashed var(--border-primary)', borderRadius: 6 }}>
+                                  🛡️ No credentials or sensitive API tokens discovered inside this script.
+                                </div>
+                              ) : (
+                                secretsList.map((sec, idx) => (
+                                  <div
+                                    key={idx}
+                                    style={{
+                                      background: 'rgba(255, 51, 102, 0.04)',
+                                      border: '1px solid rgba(255, 51, 102, 0.2)',
+                                      borderRadius: 6,
+                                      padding: 10,
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: 4
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                      <span style={{ fontSize: 11.5, fontWeight: 800, color: '#ff3366', textTransform: 'uppercase' }}>
+                                        ⚠️ {sec.label}
+                                      </span>
+                                      <button
+                                        onClick={() => handleCopy(sec.value)}
+                                        className="tool-copy-trigger"
+                                        style={{ fontSize: 9.5, padding: '2px 6px' }}
+                                      >
+                                        Copy Secret
+                                      </button>
+                                    </div>
+                                    <pre style={{
+                                      margin: 0,
+                                      padding: 8,
+                                      background: 'var(--bg-primary)',
+                                      border: '1px solid rgba(255, 51, 102, 0.1)',
+                                      borderRadius: 4,
+                                      color: '#e2e8f0',
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-all'
+                                    }}>
+                                      {sec.value}
+                                    </pre>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+
+                          {/* Tab Content 2: Extracted API Paths */}
+                          {jsTab === 'endpoints' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+                              {endpointsList.length === 0 ? (
+                                <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, border: '1px dashed var(--border-primary)', borderRadius: 6 }}>
+                                  🎯 No URL paths or routing endpoints extracted inside this script.
+                                </div>
+                              ) : (
+                                endpointsList.map((end, idx) => (
+                                  <div
+                                    key={idx}
+                                    style={{
+                                      background: 'var(--bg-secondary)',
+                                      border: '1px solid var(--border-primary)',
+                                      borderRadius: 6,
+                                      padding: '10px 12px',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      gap: 12
+                                    }}
+                                  >
+                                    <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>
+                                      {end.path}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: 4 }}>
+                                      <button
+                                        onClick={() => {
+                                          window.dispatchEvent(new CustomEvent('repeater-import-url', { detail: { url: end.path } }));
+                                          alert('Endpoint path sent to Repeater!');
+                                        }}
+                                        className="tool-btn-primary"
+                                        style={{ fontSize: 9.5, padding: '4px 8px', borderRadius: 3 }}
+                                      >
+                                        🚀 Repeater
+                                      </button>
+                                      <button
+                                        onClick={() => handleCopy(end.path)}
+                                        className="tool-copy-trigger"
+                                        style={{ fontSize: 9.5, padding: '4px 8px', borderRadius: 3 }}
+                                      >
+                                        Copy
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+
+                          {/* Tab Content 3: Dangerous Functions Audits */}
+                          {jsTab === 'vulns' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+                              {vulnsList.length === 0 ? (
+                                <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, border: '1px dashed var(--border-primary)', borderRadius: 6 }}>
+                                  🛡️ Excellent! No occurrences of high-risk eval(), innerHTML, or dynamic timer triggers found.
+                                </div>
+                              ) : (
+                                vulnsList.map((vuln, idx) => (
+                                  <div
+                                    key={idx}
+                                    style={{
+                                      background: 'rgba(255, 184, 0, 0.04)',
+                                      border: '1px solid rgba(255, 184, 0, 0.2)',
+                                      borderRadius: 6,
+                                      padding: 10,
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: 4
+                                    }}
+                                  >
+                                    <span style={{ fontSize: 12, fontWeight: 800, color: '#ffb800' }}>
+                                      ⚠️ {vuln.label}
+                                    </span>
+                                    <p style={{ margin: 0, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                                      {vuln.desc}
+                                    </p>
+                                    <pre style={{
+                                      margin: '4px 0 0 0',
+                                      padding: 8,
+                                      background: 'var(--bg-primary)',
+                                      border: '1px solid rgba(255, 184, 0, 0.1)',
+                                      borderRadius: 4,
+                                      color: '#ffb800',
+                                      fontSize: 11.5,
+                                      fontFamily: 'monospace',
+                                      overflowX: 'auto',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-all'
+                                    }}>
+                                      {vuln.codeSnippet}
+                                    </pre>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+
+                          {/* Tab Content 4: Beautified Code Box */}
+                          {jsTab === 'code' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                              <pre style={{
+                                margin: 0,
+                                padding: 12,
+                                background: 'var(--bg-primary)',
+                                border: '1px solid var(--border-primary)',
+                                borderRadius: 6,
+                                color: '#e2e8f0',
+                                fontSize: 11.5,
+                                fontFamily: 'monospace',
+                                overflow: 'auto',
+                                flex: 1,
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-all'
+                              }}>
+                                {activeCode}
+                              </pre>
+                            </div>
+                          )}
+
+                        </div>
+                      )}
+
+                    </div>
+
+                  </div>
                 </div>
               );
             })()}
