@@ -479,7 +479,8 @@ setInterval(() => {
   }
 }, 60000);
 
-function normalizeJsUrl(urlStr: string): string {
+function normalizeJsUrl(urlStr?: string): string {
+  if (!urlStr) return '';
   try {
     const url = new URL(urlStr);
     url.search = '';
@@ -488,7 +489,7 @@ function normalizeJsUrl(urlStr: string): string {
     pathname = pathname.replace(/[.-][a-zA-Z0-9_-]{6,30}(?=\.js$)/, '');
     return url.origin + pathname;
   } catch {
-    return urlStr.split('?')[0];
+    return String(urlStr).split('?')[0];
   }
 }
 

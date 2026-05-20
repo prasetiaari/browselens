@@ -22,7 +22,8 @@ export function runPassiveScan(req: CapturedRequest): string[] {
     if (setCookie) {
       const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
       for (const cookie of cookies) {
-        const cLower = cookie.toLowerCase();
+        if (!cookie) continue;
+        const cLower = String(cookie).toLowerCase();
         if (!cLower.includes('httponly')) {
           vulns.push('Cookie: Missing HttpOnly flag');
         }
@@ -38,7 +39,7 @@ export function runPassiveScan(req: CapturedRequest): string[] {
 
   // 3. Check Missing Security Headers (only for HTML responses)
   const contentType = req.responseHeaders ? getHeaderValue(req.responseHeaders, 'Content-Type') : '';
-  const isHtml = contentType && contentType.toLowerCase().includes('text/html');
+  const isHtml = contentType && String(contentType).toLowerCase().includes('text/html');
 
   if (isHtml && req.responseHeaders) {
     const csp = getHeaderValue(req.responseHeaders, 'Content-Security-Policy');
@@ -83,10 +84,11 @@ export function runPassiveScan(req: CapturedRequest): string[] {
   return Array.from(new Set(vulns));
 }
 
-function getHeaderValue(headers: Record<string, string>, name: string): string {
-  const target = name.toLowerCase();
+function getHeaderValue(headers: Record<string, string> | undefined | null, name: string): string {
+  if (!headers || typeof headers !== 'object') return '';
+  const target = (name || '').toLowerCase();
   for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === target) {
+    if (key && typeof key === 'string' && key.toLowerCase() === target) {
       return String(value);
     }
   }
