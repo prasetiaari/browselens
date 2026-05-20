@@ -243,31 +243,37 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                 }
               }}
               style={{
-                background: 'rgba(255, 51, 102, 0.1)',
-                border: '1px solid var(--accent-red)',
+                background: 'rgba(255, 51, 102, 0.08)',
+                border: '1px solid rgba(255, 51, 102, 0.3)',
                 color: 'var(--accent-red)',
                 borderRadius: 4,
-                padding: '2px 8px',
+                padding: '3px 8px',
                 fontSize: 10,
                 fontWeight: 700,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 4,
+                gap: 5,
                 marginLeft: 10,
                 transition: 'all 0.15s ease',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = 'var(--accent-red)';
                 e.currentTarget.style.color = '#fff';
+                e.currentTarget.style.boxShadow = '0 0 8px rgba(255, 51, 102, 0.4)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 51, 102, 0.1)';
+                e.currentTarget.style.background = 'rgba(255, 51, 102, 0.08)';
                 e.currentTarget.style.color = 'var(--accent-red)';
+                e.currentTarget.style.boxShadow = 'none';
               }}
               title="Delete request"
             >
-              🗑️ Delete
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              Delete
             </button>
           </div>
         </div>
@@ -308,22 +314,35 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             <option value="python">Copy as Python</option>
             <option value="fetch">Copy as Fetch</option>
           </select>
-          <button className="detail-action-btn" onClick={() => onSendToRepeater(request)}>
-            ↗ Send to Repeater
+          <button className="detail-action-btn" onClick={() => onSendToRepeater(request)} style={{ display: 'flex', alignItems: 'center' }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            </svg>
+            Send to Repeater
           </button>
           <button
             className="detail-action-btn"
             onClick={() => onAskAI(`Briefly explain the offensive significance of this HTTP request. What parameters look interesting, what is its purpose, and what attack vectors (e.g. IDOR, Parameter Pollution, SQLi, SSRF) should I target here? Keep it short, bulleted, and go straight to the point:\n\nMethod: ${request.method}\nURL: ${request.url}\nHeaders: ${JSON.stringify(request.requestHeaders, null, 2)}\nBody: ${request.requestBody || '(empty)'}`)}
             title="AI: Explain Request"
+            style={{ display: 'flex', alignItems: 'center' }}
           >
-            🤖 AI Explain
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            </svg>
+            AI Explain
           </button>
           <button
             className="detail-action-btn"
             onClick={() => onAskAI(`Perform an offensive security audit on this HTTP request/response. Identify attack vectors, list potential vulnerabilities, and suggest concrete exploit payloads or PoC commands. DO NOT give remediation or defense advice. Keep it strictly focused on exploitation, highly direct, and bulleted:\n\nMethod: ${request.method}\nURL: ${request.url}\nRequest Headers: ${JSON.stringify(request.requestHeaders, null, 2)}\nRequest Body: ${request.requestBody || '(empty)'}\nResponse Headers: ${JSON.stringify(request.responseHeaders || {}, null, 2)}\nPassive Scan Warnings: ${JSON.stringify(request.vulnerabilities || [], null, 2)}`)}
             title="AI: Security Audit"
+            style={{ display: 'flex', alignItems: 'center' }}
           >
-            🚨 AI Audit
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            AI Audit
           </button>
           <button className="icon-btn" onClick={onClose} title="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -466,7 +485,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-yellow)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-sans)', letterSpacing: '0.5px' }}>
-                    📝 Researcher Notes
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                    Researcher Notes
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {notesSaved && (
@@ -535,7 +558,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                 className="add-notes-dashed-btn"
                 title="Add security or pentesting notes to this request"
               >
-                <span>📝 Add Researcher Notes...</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+                <span>Add Researcher Notes...</span>
               </button>
             )}
 
