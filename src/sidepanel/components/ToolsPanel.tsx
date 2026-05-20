@@ -720,17 +720,96 @@ ${formInputs}
     alert('URL sent to Repeater!');
   };
 
+  // Render modern, premium, glowing cyber-security SVGs for all tools instead of basic emojis
+  const renderToolIcon = (id: string, isHovered: boolean, size: number = 34) => {
+    const strokeColor = isHovered ? 'var(--accent-cyan)' : 'var(--text-secondary)';
+    const glowStyle = isHovered ? { filter: 'drop-shadow(0 0 5px rgba(0, 229, 255, 0.75))' } : {};
+
+    switch (id) {
+      case 'base64':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <path d="M17 3h4v4M3 21L21 3M21 17v4h-4M3 3l5 5M13 13l8 8" />
+          </svg>
+        );
+      case 'jwt':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            <path d="M9 11h6M9 15h4" />
+          </svg>
+        );
+      case 'encoder':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
+            <line x1="12" y1="2" x2="12" y2="22" />
+          </svg>
+        );
+      case 'csrf':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <line x1="9" y1="9" x2="15" y2="9" />
+            <line x1="9" y1="13" x2="15" y2="13" />
+            <line x1="9" y1="17" x2="13" y2="17" />
+          </svg>
+        );
+      case 'urlparser':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+        );
+      case 'crypto':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        );
+      case 'highlighter':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="6" />
+            <circle cx="12" cy="12" r="2" />
+          </svg>
+        );
+      case 'graphql':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+        );
+      case 'jsauditor':
+        return (
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={glowStyle}>
+            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+            <polyline points="14 2 14 8 20 8" />
+            <circle cx="10" cy="15" r="3" />
+            <line x1="12" y1="17" x2="16" y2="21" />
+          </svg>
+        );
+      default:
+        return null;
+    }
+  };
+
   // List of all tools for rendering the gorgeous home grid dashboard
   const toolsList = [
-    { id: 'base64', label: 'Base64 Encoder', icon: '🔠', desc: 'Standard & URL-safe conversions with swap actions.' },
-    { id: 'jwt', label: 'JWT Playground', icon: '🎫', desc: 'Real-time JSON editor & exploit audit generator.' },
-    { id: 'encoder', label: 'HTML/URL Encoder', icon: '🌐', desc: 'Obfuscate payloads using Hex, Unicode or HTML tags.' },
-    { id: 'csrf', label: 'CSRF Exploit Builder', icon: '📝', desc: 'Build and compile auto-submit exploit pages instantly.' },
-    { id: 'urlparser', label: 'URL Query Parser', icon: '🎯', desc: 'Dissect, manipulate, and send rebuilt URLs to Repeater.' },
-    { id: 'crypto', label: 'Crypto Hash offline', icon: '🔑', desc: 'Generate offline MD5, SHA-1, SHA-256 and SHA-512.' },
-    { id: 'highlighter', label: 'DOM Visual Highlighter', icon: '🎯', desc: 'Scan and visually highlight all forms & links on the active page.' },
-    { id: 'graphql', label: 'GraphQL Traffic Analyzer', icon: '🧬', desc: 'Auto-discover GraphQL operations, query types, variables, and audit introspection vulnerabilities.' },
-    { id: 'jsauditor', label: 'JS Source Auditor & Leak Finder', icon: '🔍', desc: 'Auto-scan static scripts dynamically. Dissect AWS tokens, relative APIs, and find client-side vulnerabilities.' }
+    { id: 'base64', label: 'Base64 Encoder', desc: 'Standard & URL-safe conversions with swap actions.' },
+    { id: 'jwt', label: 'JWT Playground', desc: 'Real-time JSON editor & exploit audit generator.' },
+    { id: 'encoder', label: 'HTML/URL Encoder', desc: 'Obfuscate payloads using Hex, Unicode or HTML tags.' },
+    { id: 'csrf', label: 'CSRF Exploit Builder', desc: 'Build and compile auto-submit exploit pages instantly.' },
+    { id: 'urlparser', label: 'URL Query Parser', desc: 'Dissect, manipulate, and send rebuilt URLs to Repeater.' },
+    { id: 'crypto', label: 'Crypto Hash offline', desc: 'Generate offline MD5, SHA-1, SHA-256 and SHA-512.' },
+    { id: 'highlighter', label: 'DOM Visual Highlighter', desc: 'Scan and visually highlight all forms & links on the active page.' },
+    { id: 'graphql', label: 'GraphQL Traffic Analyzer', desc: 'Auto-discover GraphQL operations, query types, variables, and audit introspection vulnerabilities.' },
+    { id: 'jsauditor', label: 'JS Source Auditor & Leak Finder', desc: 'Auto-scan static scripts dynamically. Dissect AWS tokens, relative APIs, and find client-side vulnerabilities.' }
   ] as const;
 
   return (
@@ -766,10 +845,10 @@ ${formInputs}
                   onMouseLeave={() => setHoveredCardId(null)}
                   style={{
                     background: isHovered 
-                      ? 'rgba(0, 120, 215, 0.15)' 
+                      ? 'rgba(0, 229, 255, 0.05)' 
                       : 'transparent',
                     border: isHovered 
-                      ? '1px solid rgba(0, 120, 215, 0.45)' 
+                      ? '1px solid rgba(0, 229, 255, 0.3)' 
                       : '1px solid transparent',
                     borderRadius: 6,
                     padding: '16px 8px',
@@ -786,20 +865,19 @@ ${formInputs}
                 >
                   {/* Icon representation resembling a desktop shortcut */}
                   <div style={{
-                    fontSize: 46,
-                    background: isHovered ? 'rgba(0, 120, 215, 0.22)' : 'rgba(255, 255, 255, 0.02)',
+                    background: isHovered ? 'rgba(0, 229, 255, 0.12)' : 'rgba(255, 255, 255, 0.02)',
                     width: 80,
                     height: 80,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     borderRadius: 8,
-                    border: `1px solid ${isHovered ? 'rgba(0, 120, 215, 0.35)' : 'rgba(255, 255, 255, 0.04)'}`,
-                    transition: 'transform 0.15s ease',
+                    border: `1px solid ${isHovered ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.04)'}`,
+                    transition: 'all 0.15s ease',
                     transform: isHovered ? 'scale(1.08)' : 'scale(1)',
-                    boxShadow: isHovered ? '0 0 12px rgba(0, 120, 215, 0.35)' : 'none'
+                    boxShadow: isHovered ? '0 0 12px rgba(0, 229, 255, 0.3)' : 'none'
                   }}>
-                    {t.icon}
+                    {renderToolIcon(t.id, isHovered)}
                   </div>
 
                   {/* Desktop label below icon */}
@@ -878,8 +956,8 @@ ${formInputs}
             borderBottom: '1px solid var(--border-primary)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 20 }}>
-                {toolsList.find(t => t.id === activeTool)?.icon}
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {activeTool && renderToolIcon(activeTool, true, 20)}
               </span>
               <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--accent-cyan)' }}>
                 {toolsList.find(t => t.id === activeTool)?.label}
@@ -944,7 +1022,9 @@ ${formInputs}
                         onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 229, 255, 0.04)'}
                         onMouseLeave={e => e.currentTarget.style.background = activeTool === t.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
                       >
-                        <span>{t.icon}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {renderToolIcon(t.id, activeTool === t.id, 14)}
+                        </span>
                         <span>{t.label}</span>
                       </div>
                     ))}
