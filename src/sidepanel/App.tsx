@@ -469,22 +469,22 @@ export default function App() {
 
       {/* Header */}
       <div className="header">
-        <div className="header-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad)" strokeWidth="2" strokeLinecap="round">
-            <defs>
-              <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#00e5ff" />
-                <stop offset="100%" stopColor="#00ff88" />
-              </linearGradient>
-            </defs>
-            <circle cx="12" cy="12" r="10" />
-            <circle cx="12" cy="12" r="4" />
-            <line x1="12" y1="2" x2="12" y2="6" />
-            <line x1="12" y1="18" x2="12" y2="22" />
-            <line x1="2" y1="12" x2="6" y2="12" />
-            <line x1="18" y1="12" x2="22" y2="12" />
-          </svg>
-          <span>BrowseLens</span>
+        <div className="header-logo" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <img 
+            src="/public/icons/icon-32.png" 
+            alt="BrowseLens Logo" 
+            style={{ 
+              width: 20, 
+              height: 20, 
+              objectFit: 'contain', 
+              borderRadius: 4,
+              boxShadow: '0 0 8px rgba(0, 229, 255, 0.4)'
+            }}
+            onError={(e) => {
+              e.currentTarget.src = 'icons/icon-32.png';
+            }}
+          />
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: '#fff', letterSpacing: '0.5px' }}>BrowseLens</span>
         </div>
         <div className="header-actions">
           <input
