@@ -192,6 +192,11 @@ body {
   border-bottom-color: var(--accent-cyan);
 }
 
+.tab-btn.active svg {
+  stroke: var(--accent-cyan) !important;
+  filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.75)) !important;
+}
+
 .tab-badge {
   background: var(--accent-cyan);
   color: var(--bg-primary);
