@@ -272,7 +272,7 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               <img 
                 src={chrome.runtime.getURL('icons/ui/delete.svg')} 
                 alt="Delete" 
-                style={{ width: 11, height: 11 }} 
+                style={{ width: 14, height: 14 }} 
               />
               Delete
             </button>
@@ -319,7 +319,7 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             <img 
               src={chrome.runtime.getURL('icons/ui/repeater.svg')} 
               alt="Send to Repeater" 
-              style={{ width: 12, height: 12, marginRight: 4 }} 
+              style={{ width: 14, height: 14, marginRight: 6 }} 
             />
             Send to Repeater
           </button>
@@ -332,7 +332,7 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             <img 
               src={chrome.runtime.getURL('icons/ui/explain.svg')} 
               alt="Explain" 
-              style={{ width: 12, height: 12, marginRight: 4 }} 
+              style={{ width: 14, height: 14, marginRight: 6 }} 
             />
             AI Explain
           </button>
@@ -345,7 +345,7 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
             <img 
               src={chrome.runtime.getURL('icons/ui/audit.svg')} 
               alt="Audit" 
-              style={{ width: 12, height: 12, marginRight: 4 }} 
+              style={{ width: 14, height: 14, marginRight: 6 }} 
             />
             AI Audit
           </button>
@@ -493,7 +493,7 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                     <img 
                       src={chrome.runtime.getURL('icons/ui/notes.svg')} 
                       alt="Notes" 
-                      style={{ width: 12, height: 12 }} 
+                      style={{ width: 14, height: 14 }} 
                     />
                     Researcher Notes
                   </span>
@@ -567,7 +567,7 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
                 <img 
                   src={chrome.runtime.getURL('icons/ui/notes.svg')} 
                   alt="Notes" 
-                  style={{ width: 12, height: 12, marginRight: 6 }} 
+                  style={{ width: 14, height: 14, marginRight: 6 }} 
                 />
                 <span>Add Researcher Notes...</span>
               </button>

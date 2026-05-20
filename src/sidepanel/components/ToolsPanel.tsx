@@ -820,7 +820,7 @@ ${formInputs}
                     transform: isHovered ? 'scale(1.08)' : 'scale(1)',
                     boxShadow: isHovered ? '0 0 12px rgba(0, 229, 255, 0.3)' : 'none'
                   }}>
-                    {renderToolIcon(t.id, isHovered)}
+                    {renderToolIcon(t.id, isHovered, 46)}
                   </div>
 
                   {/* Desktop label below icon */}
@@ -900,7 +900,7 @@ ${formInputs}
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {activeTool && renderToolIcon(activeTool, true, 20)}
+                {activeTool && renderToolIcon(activeTool, true, 26)}
               </span>
               <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--accent-cyan)' }}>
                 {toolsList.find(t => t.id === activeTool)?.label}
@@ -966,7 +966,7 @@ ${formInputs}
                         onMouseLeave={e => e.currentTarget.style.background = activeTool === t.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent'}
                       >
                         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {renderToolIcon(t.id, activeTool === t.id, 14)}
+                          {renderToolIcon(t.id, activeTool === t.id, 18)}
                         </span>
                         <span>{t.label}</span>
                       </div>

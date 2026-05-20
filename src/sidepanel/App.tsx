@@ -656,15 +656,16 @@ export default function App() {
                           border: '1px solid var(--accent-red)',
                           color: 'var(--accent-red)',
                           borderRadius: 4,
-                          padding: '2px 6px',
-                          fontSize: 10,
+                          padding: '2px 8px',
+                          fontSize: 10.5,
                           fontWeight: 700,
                           cursor: 'pointer',
-                          display: 'flex',
+                          display: 'inline-flex',
                           alignItems: 'center',
-                          gap: 2,
+                          gap: 5,
                           transition: 'all 0.15s ease',
-                          whiteSpace: 'nowrap'
+                          whiteSpace: 'nowrap',
+                          height: 22
                         }}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.background = 'var(--accent-red)';
@@ -675,7 +676,12 @@ export default function App() {
                           e.currentTarget.style.color = 'var(--accent-red)';
                         }}
                       >
-                        🗑️ Purge Filtered
+                        <img 
+                          src={chrome.runtime.getURL('icons/ui/delete.svg')} 
+                          alt="Purge" 
+                          style={{ width: 13, height: 13, display: 'block' }} 
+                        />
+                        Purge Filtered
                       </button>
                     )}
                   </span>
@@ -702,10 +708,21 @@ export default function App() {
                     height: 30,
                     display: 'flex',
                     alignItems: 'center',
+                    gap: 6,
                     boxSizing: 'border-box'
                   }}
                 >
-                  ☑ Select {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}
+                  <img 
+                    src={chrome.runtime.getURL('icons/ui/select.svg')} 
+                    alt="Select" 
+                    style={{ 
+                      width: 14, 
+                      height: 14, 
+                      filter: selectMode ? 'drop-shadow(0 0 3px rgba(0, 229, 255, 0.6))' : 'opacity(0.85)',
+                      transition: 'all 0.15s ease'
+                    }} 
+                  />
+                  Select {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}
                 </button>
                 <button
                   className={`filter-chip ${compareMode ? 'active' : ''}`}
@@ -729,10 +746,21 @@ export default function App() {
                     height: 30,
                     display: 'flex',
                     alignItems: 'center',
+                    gap: 6,
                     boxSizing: 'border-box'
                   }}
                 >
-                  ⚔️ Compare
+                  <img 
+                    src={chrome.runtime.getURL('icons/ui/compare.svg')} 
+                    alt="Compare" 
+                    style={{ 
+                      width: 14, 
+                      height: 14, 
+                      filter: compareMode ? 'drop-shadow(0 0 3px rgba(0, 229, 255, 0.6))' : 'opacity(0.85)',
+                      transition: 'all 0.15s ease'
+                    }} 
+                  />
+                  Compare
                 </button>
               </div>
 
