@@ -101,6 +101,22 @@ export default function App() {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
+  // Global click-away handler to close all filter dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.dropdown-container')) {
+        setShowMethodDropdown(false);
+        setShowSchemeDropdown(false);
+        setShowStatusDropdown(false);
+        setShowDomainDropdown(false);
+        setShowProjectDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleSendToRepeater = useCallback((req: CapturedRequest) => {
     setRepeaterRequest({
       method: req.method,
@@ -784,12 +800,13 @@ export default function App() {
               <div className="filter-options" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 14px' }}>
                 
                 {/* 1. Method Dropdown */}
-                <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative' }} className="dropdown-container">
                   <button
                     onClick={() => {
                       setShowMethodDropdown(!showMethodDropdown);
                       setShowSchemeDropdown(false);
                       setShowStatusDropdown(false);
+                      setShowDomainDropdown(false);
                     }}
                     style={{
                       background: 'var(--bg-secondary)',
@@ -850,12 +867,13 @@ export default function App() {
                 </div>
 
                 {/* 2. Scheme Dropdown */}
-                <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative' }} className="dropdown-container">
                   <button
                     onClick={() => {
                       setShowSchemeDropdown(!showSchemeDropdown);
                       setShowMethodDropdown(false);
                       setShowStatusDropdown(false);
+                      setShowDomainDropdown(false);
                     }}
                     style={{
                       background: 'var(--bg-secondary)',
@@ -916,12 +934,13 @@ export default function App() {
                 </div>
 
                 {/* 3. Status Dropdown */}
-                <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative' }} className="dropdown-container">
                   <button
                     onClick={() => {
                       setShowStatusDropdown(!showStatusDropdown);
                       setShowMethodDropdown(false);
                       setShowSchemeDropdown(false);
+                      setShowDomainDropdown(false);
                     }}
                     style={{
                       background: 'var(--bg-secondary)',
@@ -988,7 +1007,7 @@ export default function App() {
                 </div>
 
                 {/* 4. Domain Dropdown (Multi-Select) */}
-                <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative' }} className="dropdown-container">
                   <button
                     onClick={() => {
                       setShowDomainDropdown(!showDomainDropdown);
