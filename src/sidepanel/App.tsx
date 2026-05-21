@@ -744,12 +744,39 @@ export default function App() {
                   <circle cx="11" cy="11" r="8" />
                   <line x1="21" y1="21" x2="16.65" y2="16.65" />
                 </svg>
-                <input
-                  className="filter-input"
-                  placeholder="Search URL or headers..."
-                  value={filter}
-                  onChange={e => setFilter(e.target.value)}
-                />
+                <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <input
+                    className="filter-input"
+                    placeholder="Search URL or headers..."
+                    value={filter}
+                    onChange={e => setFilter(e.target.value)}
+                    style={{ paddingRight: filter ? 24 : 0 }}
+                  />
+                  {filter && (
+                    <button
+                      onClick={() => setFilter('')}
+                      style={{
+                        position: 'absolute',
+                        right: 4,
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 4,
+                        transition: 'color 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--accent-red)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                      title="Clear search"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
                 {requests.length > 0 && (
                   <span style={{ color: 'var(--text-muted)', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', marginRight: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span>{filteredRequests.length}/{requests.length}</span>
