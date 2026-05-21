@@ -5,6 +5,7 @@ type DetailTab = 'headers' | 'body' | 'response';
 
 interface Props {
   request: CapturedRequest;
+  allRequests?: CapturedRequest[];
   onSendToRepeater: (req: CapturedRequest) => void;
   onAskAI: (prompt: string) => void;
   onClose: () => void;
@@ -77,7 +78,7 @@ function decodeJwt(token: string): { header: string; payload: string; error?: st
 
 import { exportToCurl, exportToPython, exportToFetch } from '../../shared/export';
 
-export default function RequestDetail({ request, onSendToRepeater, onAskAI, onClose, onSendToBase64, onSendToJwt }: Props) {
+export default function RequestDetail({ request, allRequests = [], onSendToRepeater, onAskAI, onClose, onSendToBase64, onSendToJwt }: Props) {
   const [activeTab, setActiveTab] = useState<DetailTab>('headers');
   const [exporting, setExporting] = useState(false);
   const [decodedB64Val, setDecodedB64Val] = useState<string | null>(null);
@@ -85,6 +86,27 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
   const [modalCopied, setModalCopied] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
   const [showNotesInput, setShowNotesInput] = useState(false);
+
+  // Extract all unique remoteIp addresses captured for this request's hostname
+  const resolvedIps = (() => {
+    if (!request.url) return [];
+    try {
+      const currentHost = new URL(request.url).hostname;
+      const ips = new Set<string>();
+      allRequests.forEach(r => {
+        if (!r.url || !r.remoteIp) return;
+        try {
+          const h = new URL(r.url).hostname;
+          if (h === currentHost) {
+            ips.add(r.remoteIp);
+          }
+        } catch (_) {}
+      });
+      return Array.from(ips).sort();
+    } catch (_) {
+      return [];
+    }
+  })();
 
   // Live preview & fetcher states
   const [liveContent, setLiveContent] = useState<string | null>(null);
@@ -494,6 +516,61 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               fontWeight: 500
             }}>
               {request.url}
+            </div>
+
+            {/* Target IP Address & Load Balancer Mapper */}
+            <div style={{
+              marginBottom: 12,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '10px 12px',
+              boxSizing: 'border-box'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
+                <span>🌐 Connection Metadata</span>
+              </div>
+              
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 12 }}>
+                <div style={{ flex: '1 1 120px' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 2 }}>Target IP:</div>
+                  <div style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                    {request.remoteIp ? `${request.remoteIp}:${request.remotePort || 443}` : 'Unknown (Cached / Local Replay)'}
+                  </div>
+                </div>
+                
+                {resolvedIps.length > 1 && (
+                  <div style={{ flex: '1 1 100%', borderTop: '1px dashed var(--border-color)', paddingTop: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-cyan)', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                      <span>⚖️ Load Balancer Detected! ({resolvedIps.length} IPs)</span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {resolvedIps.map(ip => {
+                        const isActive = ip === request.remoteIp;
+                        return (
+                          <span
+                            key={ip}
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: 10.5,
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              background: isActive ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                              border: isActive ? '1px solid var(--accent-cyan)' : '1px solid var(--border-color)',
+                              color: isActive ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                              fontWeight: isActive ? 700 : 500,
+                              boxShadow: isActive ? '0 0 8px rgba(0, 229, 255, 0.25)' : 'none'
+                            }}
+                            title={isActive ? 'Active IP for this specific request' : 'Resolved in another request during this session'}
+                          >
+                            {ip}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             {/* Researcher Notes Section */}
             {(request.notes && request.notes.trim() !== '') || showNotesInput ? (

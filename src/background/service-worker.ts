@@ -421,6 +421,8 @@ class DebuggerManager {
         req.statusText = params.response.statusText;
         req.responseHeaders = params.response.headers || {};
         req.mimeType = params.response.mimeType;
+        req.remoteIp = params.response.remoteIPAddress;
+        req.remotePort = params.response.remotePort;
       }
     } else if (method === 'Network.loadingFinished') {
       const req = this.pendingRequests.get(requestId);

@@ -23,6 +23,8 @@ export interface CapturedRequest {
   responseBody?: string;
   responseBodySize?: number;
   mimeType?: string;
+  remoteIp?: string;
+  remotePort?: number;
 
   // Timing
   duration?: number; // ms

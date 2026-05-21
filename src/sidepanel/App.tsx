@@ -1226,6 +1226,7 @@ export default function App() {
                     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                       <RequestDetail
                         request={selectedRequest}
+                        allRequests={requests}
                         onSendToRepeater={handleSendToRepeater}
                         onAskAI={handleAskAI}
                         onClose={() => setSelectedRequest(null)}
