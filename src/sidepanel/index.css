@@ -1608,6 +1608,74 @@ body {
   color: var(--accent-cyan) !important;
 }
 
+/* ============================================================
+   BrowseLens Tools Panel Font-Size Scaling (Gedein Font)
+   ============================================================ */
+
+.tools-panel textarea, 
+.tools-panel .tool-textarea, 
+.tools-panel .tool-textarea-readonly {
+  font-size: 13.5px !important;
+  line-height: 1.5 !important;
+}
+
+.tools-panel input,
+.tools-panel select,
+.tools-panel .tool-input-field {
+  font-size: 13.5px !important;
+}
+
+.tools-panel button,
+.tools-panel .tool-btn-primary,
+.tools-panel .tool-btn-secondary,
+.tools-panel .tool-btn-success,
+.tools-panel .tool-btn-danger,
+.tools-panel .tool-copy-trigger {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+
+.tools-panel h3, 
+.tools-panel h3 span {
+  font-size: 17px !important;
+}
+
+.tools-panel h4 {
+  font-size: 14.5px !important;
+}
+
+.tools-panel label,
+.tools-panel .tool-inner-label,
+.tools-panel .tool-inner-label-sub,
+.tools-panel span {
+  font-size: 13px !important;
+}
+
+.tools-panel p,
+.tools-panel li,
+.tools-panel ul,
+.tools-panel ol {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+
+.tools-panel pre, 
+.tools-panel code {
+  font-size: 13.5px !important;
+}
+
+.tools-panel .tool-dashboard-card p {
+  font-size: 12.5px !important;
+}
+
+.tools-panel .tool-dashboard-card h3 {
+  font-size: 15.5px !important;
+}
+
+.tools-panel .tool-alert-warning {
+  font-size: 12px !important;
+}
+
 
 
 
