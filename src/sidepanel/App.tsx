@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { CapturedRequest, ExtensionSettings } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import RequestList from './components/RequestList';
@@ -42,7 +42,7 @@ export default function App() {
   const [filterMethod, setFilterMethod] = useState('ALL');
   const [filterScheme, setFilterScheme] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
-  const [filterDomain, setFilterDomain] = useState('');
+  const [filterDomains, setFilterDomains] = useState<string[]>([]);
 
   // Multi-select bulk actions
   const [selectMode, setSelectMode] = useState(false);
@@ -53,6 +53,7 @@ export default function App() {
   const [showMethodDropdown, setShowMethodDropdown] = useState(false);
   const [showSchemeDropdown, setShowSchemeDropdown] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const [showDomainDropdown, setShowDomainDropdown] = useState(false);
 
   // Load initial requests and settings
   useEffect(() => {
@@ -244,6 +245,20 @@ export default function App() {
     });
   }, [settings, handleSwitchProject]);
 
+  const availableDomains = useMemo(() => {
+    const domains = new Set<string>();
+    requests.forEach(r => {
+      if (!r?.url) return;
+      try {
+        const urlObj = new URL(r.url);
+        if (urlObj.hostname) {
+          domains.add(urlObj.hostname);
+        }
+      } catch (_) {}
+    });
+    return Array.from(domains).sort();
+  }, [requests]);
+
   const filteredRequests = requests.filter(r => {
     if (!r) return false;
     
@@ -293,15 +308,16 @@ export default function App() {
       if (filterStatus === '5XX' && (s < 500 || s >= 600)) return false;
     }
 
-    // 5. Domain
-    if (filterDomain) {
+    // 5. Domain (Multi-select)
+    if (filterDomains.length > 0) {
       try {
         const urlStr = r.url ? String(r.url) : '';
         const urlObj = new URL(urlStr);
-        if (!urlObj.hostname.toLowerCase().includes(filterDomain.toLowerCase())) return false;
+        if (!filterDomains.includes(urlObj.hostname)) return false;
       } catch {
         const urlStr = r.url ? String(r.url).toLowerCase() : '';
-        if (!urlStr.includes(filterDomain.toLowerCase())) return false;
+        const matchesAny = filterDomains.some(d => urlStr.includes(d.toLowerCase()));
+        if (!matchesAny) return false;
       }
     }
 
@@ -971,16 +987,111 @@ export default function App() {
                   )}
                 </div>
 
-                <input
-                  className="filter-domain-input"
-                  placeholder="Domain/Subdomain..."
-                  value={filterDomain}
-                  onChange={e => setFilterDomain(e.target.value)}
-                  style={{
-                    height: 30,
-                    boxSizing: 'border-box'
-                  }}
-                />
+                {/* 4. Domain Dropdown (Multi-Select) */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => {
+                      setShowDomainDropdown(!showDomainDropdown);
+                      setShowMethodDropdown(false);
+                      setShowSchemeDropdown(false);
+                      setShowStatusDropdown(false);
+                    }}
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-secondary)',
+                      fontSize: 12.5,
+                      padding: '6px 12px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      fontWeight: 700,
+                      height: 30,
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <span>Domains: {filterDomains.length === 0 ? 'All' : `${filterDomains.length} selected`}</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>▼</span>
+                  </button>
+                  {showDomainDropdown && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      right: 0,
+                      marginTop: 4,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                      zIndex: 100000,
+                      minWidth: 220,
+                      maxWidth: 320,
+                      maxHeight: 250,
+                      overflowY: 'auto',
+                      padding: '8px 0'
+                    }}>
+                      {availableDomains.length === 0 ? (
+                        <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No domains captured</div>
+                      ) : (
+                        <>
+                          {filterDomains.length > 0 && (
+                            <div
+                              onClick={() => setFilterDomains([])}
+                              style={{
+                                padding: '6px 12px',
+                                fontSize: 11,
+                                color: 'var(--accent-red)',
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                                borderBottom: '1px solid var(--border-color)',
+                                marginBottom: 4,
+                                textAlign: 'center'
+                              }}
+                            >
+                              Clear Filter ({filterDomains.length})
+                            </div>
+                          )}
+                          {availableDomains.map(d => {
+                            const isChecked = filterDomains.includes(d);
+                            return (
+                              <label
+                                key={d}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  padding: '6px 12px',
+                                  fontSize: 12,
+                                  cursor: 'pointer',
+                                  color: isChecked ? 'var(--accent-cyan)' : 'var(--text-primary)',
+                                  transition: 'all 0.12s ease',
+                                  userSelect: 'none',
+                                  wordBreak: 'break-all'
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    setFilterDomains(prev =>
+                                      prev.includes(d) ? prev.filter(item => item !== d) : [...prev, d]
+                                    );
+                                  }}
+                                  style={{ cursor: 'pointer' }}
+                                />
+                                <span>{d}</span>
+                              </label>
+                            );
+                          })}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* LIST & DETAIL */}
