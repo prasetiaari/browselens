@@ -1068,7 +1068,7 @@ ${formInputs}
                   <label className="tool-inner-label">Raw JWT Token</label>
                   <textarea
                     className="tool-textarea"
-                    style={{ height: 80, fontSize: 10 }}
+                    style={{ minHeight: 140, height: 140, fontSize: 10 }}
                     value={jwtInput}
                     onChange={(e) => setJwtInput(e.target.value)}
                     placeholder="Paste raw token starting with eyJ..."
@@ -1098,7 +1098,7 @@ ${formInputs}
                       <label className="tool-inner-label-sub">Generated JWT</label>
                       <button onClick={() => handleCopy(jwtOutput)} className="tool-copy-trigger">📋 Copy Token</button>
                     </div>
-                    <textarea className="tool-textarea-readonly" style={{ height: 50, color: '#00ff88', fontSize: 10, resize: 'none' }} readOnly value={jwtOutput} />
+                    <textarea className="tool-textarea-readonly" style={{ minHeight: 120, height: 120, color: '#00ff88', fontSize: 10 }} readOnly value={jwtOutput} />
                   </div>
                 )}
                 <div className="jwt-audit-panel" style={{ background: 'rgba(255, 51, 102, 0.03)', border: '1px dashed rgba(255, 51, 102, 0.3)', borderRadius: 6, padding: 12 }}>
