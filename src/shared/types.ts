@@ -147,6 +147,7 @@ export interface ExtensionSettings {
     filterTypes: string[]; // 'xhr', 'fetch', 'document', 'script', 'stylesheet', 'image', 'font', 'other'
     enabled: boolean;
     targetScope: string; // Keep as fallback/global
+    maxHistoryLimit?: number; // Maximum request history items to keep
   };
   customHeaders?: CustomHeader[]; // Keep as fallback
   currentProjectId: string;
@@ -165,6 +166,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     filterTypes: ['xhr', 'fetch', 'document'],
     enabled: true,
     targetScope: '',
+    maxHistoryLimit: 1000,
   },
   customHeaders: [],
   currentProjectId: 'default',

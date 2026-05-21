@@ -177,6 +177,23 @@ export default function Settings({ settings, onSave }: Props) {
         </div>
 
         <div className="settings-field" style={{ marginTop: 12 }}>
+          <label>Max History Limit (Requests to keep)</label>
+          <input
+            type="number"
+            min={100}
+            max={10000}
+            value={local.capture.maxHistoryLimit || 1000}
+            onChange={e => setLocal({
+              ...local,
+              capture: { ...local.capture, maxHistoryLimit: parseInt(e.target.value, 10) || 1000 },
+            })}
+          />
+          <p style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>
+            Setting this too high (e.g. &gt; 5000) may impact React rendering performance.
+          </p>
+        </div>
+
+        <div className="settings-field" style={{ marginTop: 12 }}>
           <label>Target Scope (Comma-separated domains)</label>
           <input
             type="text"

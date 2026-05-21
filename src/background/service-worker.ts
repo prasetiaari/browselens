@@ -14,6 +14,15 @@ import { DEFAULT_SETTINGS } from '../shared/types';
 import { AIAgent } from '../shared/ai/agent';
 import { runPassiveScan } from '../shared/scanner';
 
+// -------------------------------------------------------------------
+// Helper: truncate strings to a size safe for chrome.storage payload
+// With unlimitedStorage permission, we can easily store 150KB per item.
+function safeTruncate(body: string | undefined, maxChars: number = 150000): string | undefined {
+  if (!body) return body;
+  return body.length > maxChars ? body.substring(0, maxChars) + '\n...[truncated to fit storage limit]' : body;
+}
+// -------------------------------------------------------------------
+
 // ---- In-Memory State ----
 let capturedRequests: CapturedRequest[] = [];
 let chatHistory: ChatEntry[] = [];
@@ -349,135 +358,121 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error: Error) => console.error('[BrowseLens] Side panel error:', error));
 
-// ---- Fallback WebRequest Capture ----
-// Tracks requests across multiple events to gather headers and body
-interface WebReqState {
-  id: string;
-  method: string;
-  url: string;
-  requestBody?: string;
-  requestHeaders: Record<string, string>;
-  timestamp: number;
-}
-const pendingWebRequests = new Map<string, WebReqState>();
+// ---- Debugger Capture (Replaces WebRequest) ----
+class DebuggerManager {
+  public attachedTabId: number | null = null;
+  private pendingRequests = new Map<string, Partial<CapturedRequest>>();
 
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
+  async attachToTab(tabId: number) {
+    if (!settings.capture.enabled) return;
+    if (this.attachedTabId === tabId) return;
+
+    // Detach from previous
+    await this.detach();
+
     try {
-      if (!settings.capture.enabled) return;
-      if (details.initiator && details.initiator.startsWith('chrome-extension://')) return;
-      if (details.url.startsWith('chrome-extension://') || details.url.includes('localhost:11434') || details.url.includes('localhost:1234')) return;
-
-      let bodyStr = '';
-      if (details.requestBody) {
-        if (details.requestBody.raw && details.requestBody.raw[0] && details.requestBody.raw[0].bytes) {
-          bodyStr = new TextDecoder('utf-8').decode(details.requestBody.raw[0].bytes);
-        } else if (details.requestBody.formData) {
-          const params = new URLSearchParams();
-          for (const [key, values] of Object.entries(details.requestBody.formData)) {
-            for (const val of values) {
-              params.append(key, typeof val === 'string' ? val : '[Binary File]');
-            }
-          }
-          bodyStr = params.toString();
-        }
-      }
-
-      pendingWebRequests.set(details.requestId, {
-        id: `wr-${details.requestId}-${Date.now()}`,
-        method: details.method,
-        url: details.url,
-        requestBody: bodyStr || undefined,
-        requestHeaders: {},
-        timestamp: Date.now(),
-      });
+      this.attachedTabId = tabId;
+      await chrome.debugger.attach({ tabId }, '1.3');
+      await chrome.debugger.sendCommand({ tabId }, 'Network.enable');
+      console.log(`[BrowseLens] Debugger attached to tab ${tabId}`);
     } catch (err) {
-      console.error('[BrowseLens] onBeforeRequest listener error:', err);
+      console.error(`[BrowseLens] Failed to attach debugger to ${tabId}:`, err);
+      this.attachedTabId = null;
     }
-  },
-  { urls: ['<all_urls>'] },
-  ['requestBody']
-);
-
-chrome.webRequest.onSendHeaders.addListener(
-  (details) => {
-    try {
-      const req = pendingWebRequests.get(details.requestId);
-      if (req && details.requestHeaders) {
-        details.requestHeaders.forEach(h => {
-          if (h.name && h.value) req.requestHeaders[h.name] = h.value;
-        });
-      }
-    } catch (err) {
-      console.error('[BrowseLens] onSendHeaders listener error:', err);
-    }
-  },
-  { urls: ['<all_urls>'] },
-  ['requestHeaders']
-);
-
-chrome.webRequest.onHeadersReceived.addListener(
-  (details) => {
-    try {
-      const req = pendingWebRequests.get(details.requestId);
-      if (req && details.responseHeaders) {
-        const headers: Record<string, string> = {};
-        let mimeType = '';
-        details.responseHeaders.forEach(h => {
-          if (h.name && h.value) {
-            headers[h.name.toLowerCase()] = h.value;
-            if (h.name.toLowerCase() === 'content-type') {
-              mimeType = h.value.split(';')[0].trim().toLowerCase();
-            }
-          }
-        });
-        (req as any).responseHeaders = headers;
-        (req as any).mimeType = mimeType;
-      }
-    } catch (err) {
-      console.error('[BrowseLens] onHeadersReceived listener error:', err);
-    }
-  },
-  { urls: ['<all_urls>'] },
-  ['responseHeaders']
-);
-
-chrome.webRequest.onCompleted.addListener(
-  (details) => {
-    try {
-      const req = pendingWebRequests.get(details.requestId);
-      if (!req) return;
-      pendingWebRequests.delete(details.requestId);
-
-      const request: CapturedRequest = {
-        id: req.id,
-        timestamp: req.timestamp,
-        tabId: details.tabId,
-        source: 'devtools', // we use devtools tag so it looks consistent
-        method: req.method,
-        url: req.url,
-        requestHeaders: req.requestHeaders,
-        requestBody: req.requestBody,
-        status: details.statusCode,
-        responseHeaders: (req as any).responseHeaders || {},
-        mimeType: (req as any).mimeType || '',
-      };
-
-      handleMessage({ type: 'REQUEST_CAPTURED', payload: request }, () => {});
-    } catch (err) {
-      console.error('[BrowseLens] onCompleted listener error:', err);
-    }
-  },
-  { urls: ['<all_urls>'] }
-);
-
-// Clean up memory
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, req] of pendingWebRequests.entries()) {
-    if (now - req.timestamp > 60000) pendingWebRequests.delete(id);
   }
-}, 60000);
+
+  async detach() {
+    if (this.attachedTabId) {
+      const tabId = this.attachedTabId;
+      this.attachedTabId = null;
+      try {
+        await chrome.debugger.detach({ tabId });
+      } catch (err) {
+        // Ignore detach errors
+      }
+    }
+    this.pendingRequests.clear();
+  }
+
+  handleEvent(source: chrome.debugger.Debuggee, method: string, params: any) {
+    if (source.tabId !== this.attachedTabId) return;
+
+    const requestId = params.requestId;
+
+    if (method === 'Network.requestWillBeSent') {
+      if (!params.request.url) return;
+      if (params.request.url.startsWith('chrome-extension://') || params.request.url.includes('localhost:11434') || params.request.url.includes('localhost:1234')) return;
+
+      this.pendingRequests.set(requestId, {
+        id: `dbg-${requestId}-${Date.now()}`,
+        timestamp: Date.now(),
+        tabId: source.tabId,
+        source: 'devtools',
+        method: params.request.method,
+        url: params.request.url,
+        requestHeaders: params.request.headers || {},
+        requestBody: params.request.postData || undefined,
+        requestBodySize: params.request.postData?.length || 0,
+      });
+    } else if (method === 'Network.responseReceived') {
+      const req = this.pendingRequests.get(requestId);
+      if (req) {
+        req.status = params.response.status;
+        req.statusText = params.response.statusText;
+        req.responseHeaders = params.response.headers || {};
+        req.mimeType = params.response.mimeType;
+      }
+    } else if (method === 'Network.loadingFinished') {
+      const req = this.pendingRequests.get(requestId);
+      if (req) {
+        // Fetch body
+        chrome.debugger.sendCommand(source, 'Network.getResponseBody', { requestId }, (response: any) => {
+          if (chrome.runtime.lastError) {
+            req.responseBody = '[error reading body: ' + chrome.runtime.lastError.message + ']';
+          } else if (response && response.body) {
+            req.responseBody = response.base64Encoded ? `[Base64 encoded content, ${response.body.length} chars]` : response.body;
+            req.responseBodySize = response.body.length;
+          } else {
+             req.responseBody = '[empty body]';
+          }
+          
+          handleMessage({ type: 'REQUEST_CAPTURED', payload: req as CapturedRequest }, () => {});
+          this.pendingRequests.delete(requestId);
+        });
+      }
+    } else if (method === 'Network.loadingFailed') {
+       this.pendingRequests.delete(requestId);
+    }
+  }
+}
+
+const debuggerManager = new DebuggerManager();
+
+chrome.debugger.onEvent.addListener(debuggerManager.handleEvent.bind(debuggerManager));
+chrome.debugger.onDetach.addListener((source) => {
+  if (source.tabId === debuggerManager.attachedTabId) {
+    debuggerManager.attachedTabId = null;
+  }
+});
+
+// Auto-attach when active tab changes
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  if (settings.capture.enabled) {
+    const tab = await chrome.tabs.get(activeInfo.tabId).catch(() => null);
+    if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+      await debuggerManager.attachToTab(activeInfo.tabId);
+    } else {
+      await debuggerManager.detach();
+    }
+  }
+});
+
+// Auto-attach on load/reload
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  if (settings.capture.enabled && tabs[0] && tabs[0].id && tabs[0].url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('chrome-extension://')) {
+    debuggerManager.attachToTab(tabs[0].id);
+  }
+});
 
 function normalizeJsUrl(urlStr?: string): string {
   if (!urlStr) return '';
@@ -563,6 +558,15 @@ async function handleMessage(
       if (request.responseBody && request.responseBody.length > MAX_BODY_SIZE) {
         request.responseBody = request.responseBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Response Body Truncated (Exceeds 150KB Limit) ...]';
         request.responseBodySize = request.responseBody.length;
+      }
+      // Apply storage-safe truncation (≤8KB) to both bodies
+      if (request.responseBody) {
+        request.responseBody = safeTruncate(request.responseBody);
+        logDebug(`Response body after safeTruncate length: ${request.responseBody?.length || 0}`);
+      }
+      if (request.requestBody) {
+        request.requestBody = safeTruncate(request.requestBody);
+        logDebug(`Request body after safeTruncate length: ${request.requestBody?.length || 0}`);
       }
       if (request.requestBody && request.requestBody.length > MAX_BODY_SIZE) {
         request.requestBody = request.requestBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Request Body Truncated (Exceeds 150KB Limit) ...]';
@@ -732,11 +736,12 @@ async function handleMessage(
         console.error('[BrowseLens] Passive scan failed:', err);
       }
 
-      // Keep max 1000 requests
-      if (capturedRequests.length > 1000) {
+      // Keep max request history based on settings
+      const historyLimit = settings.capture.maxHistoryLimit || 1000;
+      if (capturedRequests.length > historyLimit) {
         const projId = settings.currentProjectId || 'default';
-        const removed = capturedRequests.slice(0, capturedRequests.length - 1000);
-        capturedRequests = capturedRequests.slice(-1000);
+        const removed = capturedRequests.slice(0, capturedRequests.length - historyLimit);
+        capturedRequests = capturedRequests.slice(-historyLimit);
         
         // Clean up old rows from storage in background
         const keysToDelete = removed.map(r => `request_${projId}_${r.id}`);
@@ -744,6 +749,9 @@ async function handleMessage(
       }
 
       await saveSingleRequest(mergedRequest);
+        // Debug log to verify responseBody storage
+        console.log('[BrowseLens] Stored request', mergedRequest.id, 'responseBody length:', mergedRequest.responseBody?.length);
+
 
       // Notify side panel of new request
       chrome.runtime.sendMessage({
@@ -942,10 +950,11 @@ async function handleMessage(
         }
 
         capturedRequests.push(replayedRequest);
-        if (capturedRequests.length > 1000) {
+        const historyLimit = settings.capture.maxHistoryLimit || 1000;
+        if (capturedRequests.length > historyLimit) {
           const projId = settings.currentProjectId || 'default';
-          const removed = capturedRequests.slice(0, capturedRequests.length - 1000);
-          capturedRequests = capturedRequests.slice(-1000);
+          const removed = capturedRequests.slice(0, capturedRequests.length - historyLimit);
+          capturedRequests = capturedRequests.slice(-historyLimit);
           
           const keysToDelete = removed.map(r => `request_${projId}_${r.id}`);
           chrome.storage.local.remove(keysToDelete).catch(() => {});
@@ -1030,6 +1039,7 @@ async function handleMessage(
     }
 
     case 'SAVE_SETTINGS': {
+      const oldEnabled = settings?.capture?.enabled;
       settings = message.payload as ExtensionSettings;
       await chrome.storage.local.set({ settings });
       try {
@@ -1037,6 +1047,18 @@ async function handleMessage(
       } catch (err) {
         console.error('[BrowseLens] Failed to update header rules on save settings:', err);
       }
+      
+      // Handle debugger state
+      if (settings.capture.enabled && !oldEnabled) {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0] && tabs[0].id && tabs[0].url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('chrome-extension://')) {
+            debuggerManager.attachToTab(tabs[0].id);
+          }
+        });
+      } else if (!settings.capture.enabled && oldEnabled) {
+        await debuggerManager.detach();
+      }
+
       sendResponse({ success: true });
       break;
     }

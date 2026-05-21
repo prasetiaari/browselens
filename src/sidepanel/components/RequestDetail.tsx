@@ -734,9 +734,11 @@ export default function RequestDetail({ request, onSendToRepeater, onAskAI, onCl
               {request.url}
             </div>
             {!(isImage || isFont) ? (
-              <div className="detail-raw" style={{ flexShrink: 0 }}>
-                {formatBody(request.responseBody) || '(no response body captured)'}
-              </div>
+              <>
+                <div className="detail-raw" style={{ flexShrink: 0 }}>
+                  {formatBody(request.responseBody) || '(no response body captured)'}
+                </div>
+              </>
             ) : (
               <div style={{ 
                 fontSize: 10, 

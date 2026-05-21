@@ -27,32 +27,59 @@
   window.fetch = async function (...args: Parameters<typeof fetch>) {
     const [input, init] = args;
     const id = generateId();
-    const method = init?.method?.toUpperCase() || 'GET';
-    const url = typeof input === 'string' ? input : (input as Request).url;
-    const startTime = Date.now();
-
-    // Capture request headers
+    let method = 'GET';
+    let url = '';
     const requestHeaders: Record<string, string> = {};
-    if (init?.headers) {
-      const h = new Headers(init.headers);
-      h.forEach((value, key) => {
+    let requestBody: string | undefined;
+
+    if (typeof input === 'string' || input instanceof URL) {
+      url = input.toString();
+      method = init?.method?.toUpperCase() || 'GET';
+      
+      if (init?.headers) {
+        const h = new Headers(init.headers);
+        h.forEach((value, key) => {
+          requestHeaders[key] = value;
+        });
+      }
+
+      if (init?.body) {
+        if (typeof init.body === 'string') {
+          requestBody = init.body;
+        } else {
+          try {
+            requestBody = JSON.stringify(init.body);
+          } catch {
+            requestBody = '[non-serializable body]';
+          }
+        }
+      }
+    } else {
+      // It's a Request object
+      const req = input as Request;
+      url = req.url;
+      method = req.method.toUpperCase();
+      
+      req.headers.forEach((value, key) => {
         requestHeaders[key] = value;
       });
-    }
 
-    // Capture request body
-    let requestBody: string | undefined;
-    if (init?.body) {
-      if (typeof init.body === 'string') {
-        requestBody = init.body;
-      } else {
-        try {
-          requestBody = JSON.stringify(init.body);
-        } catch {
-          requestBody = '[non-serializable body]';
+      // We cannot easily synchronously read the body of a Request object without consuming it.
+      // But we can check if it was provided in init (if overriding).
+      if (init?.body) {
+        if (typeof init.body === 'string') {
+          requestBody = init.body;
+        } else {
+          try {
+            requestBody = JSON.stringify(init.body);
+          } catch {
+            requestBody = '[non-serializable body]';
+          }
         }
       }
     }
+    
+    const startTime = Date.now();
 
     try {
       const response = await originalFetch.apply(this, args);
@@ -80,13 +107,28 @@
           status: response.status,
           statusText: response.statusText,
           responseHeaders,
-          responseBody: body.length > 50000 ? body.substring(0, 50000) + '...[truncated]' : body,
+          responseBody: (body && body.length > 0) ? (body.length > 50000 ? body.substring(0, 50000) + '...[truncated]' : body) : '[empty body]',
           responseBodySize: body.length,
           mimeType: response.headers.get('content-type') || '',
           duration,
         });
       }).catch(() => {
-        // Ignore body read errors
+        sendToExtension({
+          id,
+          timestamp: startTime,
+          source: 'content-script',
+          method,
+          url,
+          requestHeaders,
+          requestBody,
+          status: response.status,
+          statusText: response.statusText,
+          responseHeaders,
+          responseBody: '[error reading body]',
+          responseBodySize: 0,
+          mimeType: response.headers.get('content-type') || '',
+          duration,
+        });
       });
 
       return response;
