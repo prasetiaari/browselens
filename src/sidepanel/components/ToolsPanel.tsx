@@ -395,15 +395,40 @@ export default function ToolsPanel({ initialTab = null, initialBase64 = '', init
       });
     });
   };
-
-
-
   // --- Event Listeners for Tab Bridging ---
   useEffect(() => {
     const handleB64Event = (e: Event) => {
-      const text = (e as CustomEvent).detail?.text || '';
+      const detail = (e as CustomEvent).detail;
+      const text = detail?.text || '';
       setB64Input(text);
       setActiveTool('base64');
+      
+      if (detail?.action === 'decode') {
+        try {
+          let input = text;
+          let isUrlSafe = false;
+          if (text.includes('-') || text.includes('_')) {
+            isUrlSafe = true;
+            input = input.replace(/-/g, '+').replace(/_/g, '/');
+            while (input.length % 4) input += '=';
+          }
+          const decoded = decodeURIComponent(escape(atob(input)));
+          setB64Output(decoded);
+        } catch (err) {
+          try {
+            setB64Output(atob(text));
+          } catch (_) {
+            setB64Output('Error decoding: ' + String(err));
+          }
+        }
+      } else if (detail?.action === 'encode') {
+        try {
+          const encoded = btoa(unescape(encodeURIComponent(text)));
+          setB64Output(encoded);
+        } catch (err) {
+          setB64Output('Error encoding: ' + String(err));
+        }
+      }
     };
 
     const handleJwtEvent = (e: Event) => {

@@ -44,6 +44,96 @@ function getActiveProject() {
   return activeProj;
 }
 
+function isUrlInScope(urlStr?: string): boolean {
+  if (!urlStr) return false;
+  
+  // Exclude chrome internal schemes immediately
+  if (urlStr.startsWith('chrome://') || urlStr.startsWith('chrome-extension://')) {
+    return false;
+  }
+
+  const activeProject = getActiveProject();
+  
+  // 1. Target Scope Check
+  if (activeProject.targetScope && activeProject.targetScope.trim() !== '') {
+    const scopes = activeProject.targetScope.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const reqUrl = urlStr.toLowerCase();
+    
+    let hostname = '';
+    try {
+      hostname = new URL(reqUrl).hostname;
+    } catch (_) {
+      hostname = reqUrl;
+    }
+
+    let inScope = false;
+    for (const scope of scopes) {
+      const cleanScope = scope.startsWith('*.') ? scope.slice(2) : scope;
+      if (hostname === cleanScope || hostname.endsWith(`.${cleanScope}`)) {
+        inScope = true;
+        break;
+      }
+    }
+
+    if (!inScope) {
+      return false; // Out of target scope
+    }
+  }
+
+  // 2. Exclude Scope Check
+  if (activeProject.excludeScope && activeProject.excludeScope.trim() !== '') {
+    const excludes = activeProject.excludeScope.split(',').map(s => s.trim()).filter(Boolean);
+    const reqUrl = urlStr.toLowerCase();
+    let hostname = '';
+    try {
+      hostname = new URL(reqUrl).hostname;
+    } catch (_) {
+      hostname = reqUrl;
+    }
+
+    let excluded = false;
+    for (const item of excludes) {
+      const lowerItem = item.toLowerCase();
+      
+      // Regex Match (e.g. /activeview|worklet/i)
+      if (item.startsWith('/') && item.lastIndexOf('/') > 0) {
+        try {
+          const lastSlashIdx = item.lastIndexOf('/');
+          const pattern = item.slice(1, lastSlashIdx);
+          const flags = item.slice(lastSlashIdx + 1);
+          const regex = new RegExp(pattern, flags.includes('i') ? 'i' : '');
+          if (regex.test(urlStr)) {
+            excluded = true;
+            break;
+          }
+        } catch (_) {}
+      }
+      // Wildcard Subdomains Match (e.g., "*.doubleclick.net")
+      else if (lowerItem.startsWith('*.')) {
+        const base = lowerItem.slice(2);
+        if (hostname === base || hostname.endsWith(`.${base}`)) {
+          excluded = true;
+          break;
+        }
+      } 
+      // Substring / Exact Host Match
+      else {
+        if (hostname.includes(lowerItem) || reqUrl.includes(lowerItem)) {
+          excluded = true;
+          break;
+        }
+      }
+    }
+
+    if (excluded) {
+      return false; // Excluded!
+    }
+  }
+
+  // If we passed all checks (or none were defined), it is in-scope!
+  return true;
+}
+
 async function loadSettings() {
   try {
     const stored = await chrome.storage.local.get('settings');
@@ -238,16 +328,11 @@ async function updateHeaderRules() {
       removeRuleIds: existingIds
     });
 
-    // 3. Build new rules based on active project customHeaders
+    // 3. Build new rules based on active project customHeaders and matchReplaceRules
     const activeProject = getActiveProject();
-    const headersToInject = (activeProject.customHeaders || []).filter(h => h.enabled && h.name.trim() !== '');
-    if (headersToInject.length === 0) {
-      console.log('[BrowseLens] No active custom headers to inject for project:', activeProject.name);
-      return;
-    }
-
     const rules: chrome.declarativeNetRequest.Rule[] = [];
-    
+    let ruleId = 1;
+
     // Check if we have dynamic scopes to target
     let domains: string[] = [];
     if (activeProject.targetScope && activeProject.targetScope.trim() !== '') {
@@ -257,25 +342,54 @@ async function updateHeaderRules() {
         .filter(Boolean);
     }
 
-    // Build the requestHeaders array for declarativeNetRequest action
-    const requestHeadersOption = headersToInject.map(h => ({
-      header: h.name.trim(),
-      operation: 'set' as const,
-      value: h.value
-    }));
+    // A. CUSTOM HEADERS rules
+    const headersToInject = (activeProject.customHeaders || []).filter(h => h.enabled && h.name.trim() !== '');
+    if (headersToInject.length > 0) {
+      const requestHeadersOption = headersToInject.map(h => ({
+        header: h.name.trim(),
+        operation: 'set' as const,
+        value: h.value
+      }));
 
-    if (domains.length > 0) {
-      // Create separate rules for each domain in the scope
-      domains.forEach((domain, idx) => {
+      if (domains.length > 0) {
+        domains.forEach((domain) => {
+          rules.push({
+            id: ruleId++,
+            priority: 1,
+            action: {
+              type: 'modifyHeaders' as const,
+              requestHeaders: requestHeadersOption,
+            },
+            condition: {
+              urlFilter: `*://${domain}/*`,
+              resourceTypes: [
+                'main_frame' as const,
+                'sub_frame' as const,
+                'stylesheet' as const,
+                'script' as const,
+                'image' as const,
+                'font' as const,
+                'object' as const,
+                'xmlhttprequest' as const,
+                'ping' as const,
+                'csp_report' as const,
+                'media' as const,
+                'websocket' as const,
+                'other' as const
+              ]
+            }
+          });
+        });
+      } else {
         rules.push({
-          id: idx + 1,
+          id: ruleId++,
           priority: 1,
           action: {
             type: 'modifyHeaders' as const,
             requestHeaders: requestHeadersOption,
           },
           condition: {
-            urlFilter: `*://${domain}/*`,
+            urlFilter: '*',
             resourceTypes: [
               'main_frame' as const,
               'sub_frame' as const,
@@ -293,42 +407,85 @@ async function updateHeaderRules() {
             ]
           }
         });
-      });
-    } else {
-      // Global injection (all URLs)
-      rules.push({
-        id: 1,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders' as const,
-          requestHeaders: requestHeadersOption,
-        },
-        condition: {
-          urlFilter: '*',
-          resourceTypes: [
-            'main_frame' as const,
-            'sub_frame' as const,
-            'stylesheet' as const,
-            'script' as const,
-            'image' as const,
-            'font' as const,
-            'object' as const,
-            'xmlhttprequest' as const,
-            'ping' as const,
-            'csp_report' as const,
-            'media' as const,
-            'websocket' as const,
-            'other' as const
-          ]
-        }
-      });
+      }
+    }
+
+    // B. MATCH & REPLACE rules (Chrome DeclarativeNetRequest Request Header overrides)
+    const activeMRRules = (activeProject.matchReplaceRules || []).filter(r => r.enabled && r.match.trim() !== '');
+    
+    // We filter down to 'requestHeader' overrides that are fully supported in DNR
+    const mrHeaders = activeMRRules.filter(r => r.type === 'requestHeader');
+    if (mrHeaders.length > 0) {
+      const requestHeadersOptionMR = mrHeaders.map(mr => ({
+        header: mr.match.trim(),
+        operation: 'set' as const,
+        value: mr.replace
+      }));
+
+      if (domains.length > 0) {
+        domains.forEach((domain) => {
+          rules.push({
+            id: ruleId++,
+            priority: 2, // Higher priority so match & replace overrides default custom headers
+            action: {
+              type: 'modifyHeaders' as const,
+              requestHeaders: requestHeadersOptionMR,
+            },
+            condition: {
+              urlFilter: `*://${domain}/*`,
+              resourceTypes: [
+                'main_frame' as const,
+                'sub_frame' as const,
+                'stylesheet' as const,
+                'script' as const,
+                'image' as const,
+                'font' as const,
+                'object' as const,
+                'xmlhttprequest' as const,
+                'ping' as const,
+                'csp_report' as const,
+                'media' as const,
+                'websocket' as const,
+                'other' as const
+              ]
+            }
+          });
+        });
+      } else {
+        rules.push({
+          id: ruleId++,
+          priority: 2,
+          action: {
+            type: 'modifyHeaders' as const,
+            requestHeaders: requestHeadersOptionMR,
+          },
+          condition: {
+            urlFilter: '*',
+            resourceTypes: [
+              'main_frame' as const,
+              'sub_frame' as const,
+              'stylesheet' as const,
+              'script' as const,
+              'image' as const,
+              'font' as const,
+              'object' as const,
+              'xmlhttprequest' as const,
+              'ping' as const,
+              'csp_report' as const,
+              'media' as const,
+              'websocket' as const,
+              'other' as const
+            ]
+          }
+        });
+      }
     }
 
     if (rules.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({
         addRules: rules
       });
-      console.log(`[BrowseLens] Successfully injected ${headersToInject.length} custom headers into declarative rules for project: ${activeProject.name}`);
+      console.log(`[BrowseLens] DeclarativeNetRequest updated. Generated ${rules.length} active routing rule blocks.`);
     }
   } catch (err) {
     console.error('[BrowseLens] Failed to update dynamic header injection rules:', err);
@@ -461,7 +618,7 @@ chrome.debugger.onDetach.addListener((source) => {
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (settings.capture.enabled) {
     const tab = await chrome.tabs.get(activeInfo.tabId).catch(() => null);
-    if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+    if (tab && tab.url && isUrlInScope(tab.url)) {
       await debuggerManager.attachToTab(activeInfo.tabId);
     } else {
       await debuggerManager.detach();
@@ -469,9 +626,26 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   }
 });
 
+// Auto-attach/detach when tab URL updates (e.g. navigation)
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (settings.capture.enabled && tab.active) {
+    const urlToCheck = changeInfo.url || tab.url;
+    if (urlToCheck) {
+      if (isUrlInScope(urlToCheck)) {
+        await debuggerManager.attachToTab(tabId);
+      } else {
+        // If we are currently attached to this tab but it went out of scope, detach!
+        if (debuggerManager.attachedTabId === tabId) {
+          await debuggerManager.detach();
+        }
+      }
+    }
+  }
+});
+
 // Auto-attach on load/reload
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-  if (settings.capture.enabled && tabs[0] && tabs[0].id && tabs[0].url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('chrome-extension://')) {
+  if (settings.capture.enabled && tabs[0] && tabs[0].id && tabs[0].url && isUrlInScope(tabs[0].url)) {
     debuggerManager.attachToTab(tabs[0].id);
   }
 });
@@ -1093,3 +1267,88 @@ async function handleMessage(
       sendResponse({ error: `Unknown message type: ${message.type}` });
   }
 }
+
+// ---- Context Menus for Selected Text ----
+chrome.runtime.onInstalled.addListener(() => {
+  // Clear any existing menus to avoid duplicate ID errors
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "browse-lens-parent",
+      title: "🔍 BrowseLens Tools",
+      contexts: ["selection"]
+    });
+
+    chrome.contextMenus.create({
+      parentId: "browse-lens-parent",
+      id: "decode-base64",
+      title: "🔓 Decode Base64",
+      contexts: ["selection"]
+    });
+
+    chrome.contextMenus.create({
+      parentId: "browse-lens-parent",
+      id: "encode-base64",
+      title: "🔢 Encode Base64",
+      contexts: ["selection"]
+    });
+
+    chrome.contextMenus.create({
+      parentId: "browse-lens-parent",
+      id: "decode-jwt",
+      title: "🔑 Decode JWT Token",
+      contexts: ["selection"]
+    });
+
+    chrome.contextMenus.create({
+      parentId: "browse-lens-parent",
+      id: "ask-ai",
+      title: "🪄 Ask AI Assistant",
+      contexts: ["selection"]
+    });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const selectedText = info.selectionText;
+  if (!selectedText) return;
+
+  // 1. Save action payload to storage so the sidepanel can pick it up on mount/load
+  await chrome.storage.local.set({
+    pending_tool_action: {
+      type: info.menuItemId,
+      text: selectedText,
+      timestamp: Date.now()
+    }
+  });
+
+  // 2. Programmatically open SidePanel if supported (MV3)
+  if (tab?.windowId && chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
+    chrome.sidePanel.open({ windowId: tab.windowId }).catch((err) => {
+      console.warn('[BrowseLens] Failed to open side panel via script:', err);
+    });
+  }
+
+  // 3. Broadcast immediately in case SidePanel is already open and active
+  if (info.menuItemId === "decode-base64") {
+    chrome.runtime.sendMessage({
+      type: "TRIGGER_BASE64_DECODE",
+      payload: { text: selectedText }
+    }).catch(() => {});
+  } else if (info.menuItemId === "encode-base64") {
+    chrome.runtime.sendMessage({
+      type: "TRIGGER_BASE64_ENCODE",
+      payload: { text: selectedText }
+    }).catch(() => {});
+  } else if (info.menuItemId === "decode-jwt") {
+    chrome.runtime.sendMessage({
+      type: "TRIGGER_JWT_DECODE",
+      payload: { text: selectedText }
+    }).catch(() => {});
+  } else if (info.menuItemId === "ask-ai") {
+    chrome.runtime.sendMessage({
+      type: "TRIGGER_ASK_AI",
+      payload: { prompt: `Analyze and explain this string selected from the web page:\n\n"${selectedText}"` }
+    }).catch(() => {});
+  }
+});
+

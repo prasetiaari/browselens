@@ -128,6 +128,14 @@ export interface CustomHeader {
   enabled: boolean;
 }
 
+export interface MatchReplaceRule {
+  id: string;
+  type: 'requestHeader' | 'responseHeader' | 'requestBody' | 'responseBody';
+  match: string;
+  replace: string;
+  enabled: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -135,6 +143,7 @@ export interface Project {
   targetScope: string;
   excludeScope?: string;
   customHeaders: CustomHeader[];
+  matchReplaceRules?: MatchReplaceRule[];
 }
 
 /** Extension settings */
@@ -180,6 +189,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
       targetScope: '',
       excludeScope: '',
       customHeaders: [],
+      matchReplaceRules: [],
     }
   ],
 };

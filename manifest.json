@@ -11,7 +11,8 @@
     "webRequest",
     "unlimitedStorage",
     "declarativeNetRequest",
-    "debugger"
+    "debugger",
+    "contextMenus"
   ],
   "host_permissions": ["<all_urls>"],
   "side_panel": {

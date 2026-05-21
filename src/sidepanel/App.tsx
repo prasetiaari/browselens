@@ -55,6 +55,24 @@ export default function App() {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showDomainDropdown, setShowDomainDropdown] = useState(false);
 
+  const handleSendToBase64 = useCallback((text: string, action?: 'decode' | 'encode') => {
+    setToolsInitialBase64Text(text);
+    setToolsInitialTab('base64');
+    setActiveMainTab('tools');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('tools-trigger-base64', { detail: { text, action } }));
+    }, 50);
+  }, []);
+
+  const handleSendToJwt = useCallback((text: string) => {
+    setToolsInitialJwtText(text);
+    setToolsInitialTab('jwt');
+    setActiveMainTab('tools');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('tools-trigger-jwt', { detail: { text } }));
+    }, 50);
+  }, []);
+
   // Load initial requests and settings
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
@@ -95,11 +113,19 @@ export default function App() {
         const { ids } = message.payload;
         setRequests(prev => prev.filter(r => !ids.includes(r.id)));
         setSelectedRequest(prev => prev && ids.includes(prev.id) ? null : prev);
+      } else if (message.type === 'TRIGGER_BASE64_DECODE') {
+        handleSendToBase64(message.payload.text, 'decode');
+      } else if (message.type === 'TRIGGER_BASE64_ENCODE') {
+        handleSendToBase64(message.payload.text, 'encode');
+      } else if (message.type === 'TRIGGER_JWT_DECODE') {
+        handleSendToJwt(message.payload.text);
+      } else if (message.type === 'TRIGGER_ASK_AI') {
+        handleAskAI(message.payload.prompt);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, []);
+  }, [handleSendToBase64, handleSendToJwt]);
 
   // Global click-away handler to close all filter dropdowns
   useEffect(() => {
@@ -117,6 +143,40 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Check and execute any pending context menu tools actions (from right click context menu)
+  useEffect(() => {
+    const checkPendingAction = () => {
+      chrome.storage.local.get('pending_tool_action', (res) => {
+        if (res.pending_tool_action) {
+          const actionPayload = res.pending_tool_action as { type: string; text: string };
+          const { type, text } = actionPayload;
+          chrome.storage.local.remove('pending_tool_action');
+          if (type === 'decode-base64' || type === 'TRIGGER_BASE64_DECODE') {
+            handleSendToBase64(text, 'decode');
+          } else if (type === 'encode-base64' || type === 'TRIGGER_BASE64_ENCODE') {
+            handleSendToBase64(text, 'encode');
+          } else if (type === 'decode-jwt' || type === 'TRIGGER_JWT_DECODE') {
+            handleSendToJwt(text);
+          } else if (type === 'ask-ai' || type === 'TRIGGER_ASK_AI') {
+            handleAskAI(`Analyze and explain this string selected from the web page:\n\n"${text}"`);
+          }
+        }
+      });
+    };
+
+    // Initial check on sidepanel startup
+    checkPendingAction();
+
+    // Live update when sidepanel is currently open
+    const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.pending_tool_action?.newValue) {
+        checkPendingAction();
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+    return () => chrome.storage.onChanged.removeListener(storageListener);
+  }, [handleSendToBase64, handleSendToJwt]);
+
   const handleSendToRepeater = useCallback((req: CapturedRequest) => {
     setRepeaterRequest({
       method: req.method,
@@ -132,24 +192,6 @@ export default function App() {
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('ai-trigger-prompt', { detail: { prompt } }));
     }, 100);
-  }, []);
-
-  const handleSendToBase64 = useCallback((text: string) => {
-    setToolsInitialBase64Text(text);
-    setToolsInitialTab('base64');
-    setActiveMainTab('tools');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('tools-trigger-base64', { detail: { text } }));
-    }, 50);
-  }, []);
-
-  const handleSendToJwt = useCallback((text: string) => {
-    setToolsInitialJwtText(text);
-    setToolsInitialTab('jwt');
-    setActiveMainTab('tools');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('tools-trigger-jwt', { detail: { text } }));
-    }, 50);
   }, []);
 
   const handleSelectRequest = useCallback((req: CapturedRequest) => {
@@ -560,82 +602,92 @@ export default function App() {
               <line x1="12" y1="17" x2="12" y2="21"/>
             </svg>
           </button>
-          <button
-            className={`icon-btn ${activeMainTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveMainTab(activeMainTab === 'settings' ? 'network' : 'settings')}
-            title="Settings"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12,1V4M12,20v3M4.22,4.22l2.12,2.12M17.66,17.66l2.12,2.12M1,12H4M20,12h3M4.22,19.78l2.12-2.12M17.66,6.34l2.12-2.12" />
-            </svg>
-          </button>
         </div>
       </div>
 
       {/* Main Tab Navigation */}
-      {activeMainTab !== 'settings' && (
-        <div className="tab-nav">
-          <button
-            className={`tab-btn ${activeMainTab === 'network' ? 'active' : ''}`}
-            onClick={() => setActiveMainTab('network')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+      <div className="tab-nav">
+        <button
+          className={`tab-btn ${activeMainTab === 'network' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('network')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <img 
+            src={chrome.runtime.getURL('icons/ui/network.svg')} 
+            alt="Network" 
+            style={{ 
+              width: 14, 
+              height: 14, 
+              filter: activeMainTab === 'network' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+              transition: 'all 0.2s ease' 
+            }} 
+          />
+          Network
+          {requests.length > 0 && <span className="tab-badge">{requests.length}</span>}
+        </button>
+        <button
+          className={`tab-btn ${activeMainTab === 'chat' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('chat')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <img 
+            src={chrome.runtime.getURL('icons/ui/chat.svg')} 
+            alt="AI Chat" 
+            style={{ 
+              width: 14, 
+              height: 14, 
+              filter: activeMainTab === 'chat' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+              transition: 'all 0.2s ease' 
+            }} 
+          />
+          AI Chat
+        </button>
+        <button
+          className={`tab-btn ${activeMainTab === 'tools' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('tools')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <img 
+            src={chrome.runtime.getURL('icons/ui/tools.svg')} 
+            alt="Tools" 
+            style={{ 
+              width: 14, 
+              height: 14, 
+              filter: activeMainTab === 'tools' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+              transition: 'all 0.2s ease' 
+            }} 
+          />
+          Tools
+        </button>
+        <button
+          className={`tab-btn ${activeMainTab === 'settings' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('settings')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <svg 
+            width="14" 
+            height="14" 
+            viewBox="0 0 24 24" 
+            fill="none" 
+            stroke="currentColor" 
+            strokeWidth="2"
+            style={{
+              filter: activeMainTab === 'settings' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
+              transition: 'all 0.2s ease'
+            }}
           >
-            <img 
-              src={chrome.runtime.getURL('icons/ui/network.svg')} 
-              alt="Network" 
-              style={{ 
-                width: 14, 
-                height: 14, 
-                filter: activeMainTab === 'network' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
-                transition: 'all 0.2s ease' 
-              }} 
-            />
-            Network
-            {requests.length > 0 && <span className="tab-badge">{requests.length}</span>}
-          </button>
-          <button
-            className={`tab-btn ${activeMainTab === 'chat' ? 'active' : ''}`}
-            onClick={() => setActiveMainTab('chat')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-          >
-            <img 
-              src={chrome.runtime.getURL('icons/ui/chat.svg')} 
-              alt="AI Chat" 
-              style={{ 
-                width: 14, 
-                height: 14, 
-                filter: activeMainTab === 'chat' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
-                transition: 'all 0.2s ease' 
-              }} 
-            />
-            AI Chat
-          </button>
-          <button
-            className={`tab-btn ${activeMainTab === 'tools' ? 'active' : ''}`}
-            onClick={() => setActiveMainTab('tools')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-          >
-            <img 
-              src={chrome.runtime.getURL('icons/ui/tools.svg')} 
-              alt="Tools" 
-              style={{ 
-                width: 14, 
-                height: 14, 
-                filter: activeMainTab === 'tools' ? 'drop-shadow(0 0 4px rgba(0, 229, 255, 0.8))' : 'opacity(0.7)',
-                transition: 'all 0.2s ease' 
-              }} 
-            />
-            Tools
-          </button>
-        </div>
-      )}
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12,1V4M12,20v3M4.22,4.22l2.12,2.12M17.66,17.66l2.12,2.12M1,12H4M20,12h3M4.22,19.78l2.12-2.12M17.66,6.34l2.12-2.12" />
+          </svg>
+          Settings
+        </button>
+      </div>
 
       {/* Main Content */}
       <div className="main-content">
-        {activeMainTab === 'settings' && (
+        <div style={{ display: activeMainTab === 'settings' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
           <Settings settings={settings} onSave={setSettings} />
-        )}
+        </div>
         
         <div style={{ display: activeMainTab === 'network' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
           {/* Sub Tab Navigation for Network */}

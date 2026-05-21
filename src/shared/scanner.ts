@@ -80,6 +80,47 @@ export function runPassiveScan(req: CapturedRequest): string[] {
     }
   }
 
+  // 5b. Database Error Leak Checker (Passive Scan Point 5)
+  if (req.responseBody && isHtml) {
+    const dbErrors = [
+      { name: 'MySQL', regex: /(SQL syntax.*?mysql|warning.*?mysql_.*?|valid MySQL result|MySqlException)/i },
+      { name: 'PostgreSQL', regex: /(PostgreSQL.*?ERROR|Warning.*?pg_.*?|PostgreSQL query failed|Severity: ERROR.*?fields:)/i },
+      { name: 'Oracle', regex: /(Oracle error|ORA-\d{5}|OracleException|TNS-.*?)/i },
+      { name: 'SQLite', regex: /(SQLite\/JDBCDriver|SQLiteException|System\.Data\.SQLite\.SQLiteException)/i },
+      { name: 'Microsoft SQL Server', regex: /(Driver.*?SQL Server|SQLServerException|Warning.*?mssql_.*?|SqlException)/i },
+      { name: 'MongoDB', regex: /(MongoException|MongoServerException|MongoDB\.Driver|WriteError.*?code.*?writeConcernError)/i },
+      { name: 'Generic SQL / PHP Stacktrace', regex: /(SQL syntax|Fatal error.*?in.*?on line|Call to undefined function|Stack trace:)/i }
+    ];
+
+    for (const db of dbErrors) {
+      if (db.regex.test(req.responseBody)) {
+        vulns.push(`DB Leak: Exposed ${db.name} database error or stacktrace found in response body!`);
+      }
+    }
+  }
+
+  // 5c. Leaked Secrets Scan on Response Body (Passive Scan Point 5)
+  if (req.responseBody && !req.responseBody.startsWith('[Response body discarded')) {
+    const secretPatterns = [
+      { name: 'AWS Access Key', regex: /(A3T[A-Z0-9]|AKIA[A-Z0-9]{12,})/ },
+      { name: 'Google API Key', regex: /AIza[Sy][A-Za-z0-9_-]{35}/ },
+      { name: 'Slack Token', regex: /xox[bapr]-[0-9]{10,12}-[A-Za-z0-9]{24}/ },
+      { name: 'Stripe API Key', regex: /sk_live_[0-9a-zA-Z]{24}/ },
+      { name: 'Generic API/Secret Key', regex: /(?:key|api|secret|password|token|auth|pass|cred)(?:["']?\s*[:=]\s*["'])([A-Za-z0-9_-]{16,})(?:["'])/i }
+    ];
+
+    for (const pattern of secretPatterns) {
+      const match = pattern.regex.exec(req.responseBody);
+      if (match) {
+        // Exclude false positives (like common strings or styling tags)
+        const val = match[1] || match[0];
+        if (val.length < 50 || !val.includes(' ') && !val.includes('<') && !val.includes('>')) {
+          vulns.push(`Secret Leak: Potential ${pattern.name} found in response body (${val.substring(0, 10)}...)!`);
+        }
+      }
+    }
+  }
+
   // 6. Reflected XSS / Input Reflection (Simple Grading)
   if (req.responseBody && req.url && isHtml) {
     try {
