@@ -1,5 +1,216 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatEntry, ToolCall } from '../../shared/types';
+
+// ---- InlineRequestExecutor ----
+interface InlineResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: string;
+  duration: number;
+}
+
+function InlineRequestExecutor({ initialRequest }: { initialRequest: string }) {
+  const [rawRequest, setRawRequest] = useState(initialRequest.trim());
+  const [response, setResponse] = useState<InlineResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [bodyCollapsed, setBodyCollapsed] = useState(false);
+  const [headersCollapsed, setHeadersCollapsed] = useState(true);
+
+  const handleSend = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setResponse(null);
+    chrome.runtime.sendMessage(
+      { type: 'EXECUTE_RAW_HTTP', payload: { rawRequest } },
+      (res) => {
+        setLoading(false);
+        if (res?.success) {
+          setResponse({ status: res.status, statusText: res.statusText, headers: res.headers, body: res.body, duration: res.duration });
+        } else {
+          setError(res?.error || 'Unknown error');
+        }
+      }
+    );
+  }, [rawRequest]);
+
+  const handleSendToRepeater = useCallback(() => {
+    // Parse raw request and dispatch custom event to App.tsx
+    const lines = rawRequest.trim().split(/\r?\n/);
+    const [requestLine, ...rest] = lines;
+    const [method, path] = (requestLine || 'GET /').trim().split(/\s+/);
+    const headers: Record<string, string> = {};
+    let bodyStart = rest.length;
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i].trim() === '') { bodyStart = i + 1; break; }
+      const colon = rest[i].indexOf(':');
+      if (colon !== -1) headers[rest[i].substring(0, colon).trim()] = rest[i].substring(colon + 1).trim();
+    }
+    const body = rest.slice(bodyStart).join('\n').trim();
+    const host = headers['Host'] || headers['host'] || 'localhost';
+    const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+    const url = (path || '/').startsWith('http') ? (path || '/') : `${protocol}://${host}${path || '/'}`;
+    window.dispatchEvent(new CustomEvent('send-to-repeater', {
+      detail: { method: method || 'GET', url, headers, body }
+    }));
+  }, [rawRequest]);
+
+  const statusColor = !response ? 'var(--text-muted)' :
+    response.status < 300 ? '#00e676' :
+    response.status < 400 ? '#ffb300' : '#ff5252';
+
+  return (
+    <div style={{
+      marginTop: 8,
+      border: '1px solid var(--border-color)',
+      borderRadius: 8,
+      overflow: 'hidden',
+      background: 'rgba(0,0,0,0.3)',
+    }}>
+      {/* Header bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '4px 10px', background: 'rgba(0, 229, 255, 0.05)',
+        borderBottom: '1px solid var(--border-color)'
+      }}>
+        <span style={{ fontSize: 10, color: 'var(--accent-cyan)', fontWeight: 600 }}>🌐 HTTP Request</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            onClick={handleSendToRepeater}
+            style={{
+              background: 'rgba(255,183,0,0.12)', border: '1px solid rgba(255,183,0,0.3)',
+              borderRadius: 4, padding: '2px 8px', fontSize: 10, color: '#ffb300',
+              cursor: 'pointer', fontWeight: 600
+            }}
+          >⟳ Repeater</button>
+          <button
+            onClick={handleSend}
+            disabled={loading}
+            style={{
+              background: loading ? 'rgba(0,229,255,0.05)' : 'rgba(0,229,255,0.15)',
+              border: '1px solid rgba(0,229,255,0.3)',
+              borderRadius: 4, padding: '2px 10px', fontSize: 10,
+              color: 'var(--accent-cyan)', cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 700
+            }}
+          >{loading ? '⟳ Sending...' : '▶ Send'}</button>
+        </div>
+      </div>
+
+      {/* Editable request area */}
+      <textarea
+        value={rawRequest}
+        onChange={e => setRawRequest(e.target.value)}
+        spellCheck={false}
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          minHeight: 90, maxHeight: 220, resize: 'vertical',
+          background: 'transparent', border: 'none',
+          color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: 11,
+          padding: '8px 10px', outline: 'none', lineHeight: 1.5,
+        }}
+      />
+
+      {/* Response area */}
+      {(response || error || loading) && (
+        <div style={{ borderTop: '1px solid var(--border-color)' }}>
+          {loading && (
+            <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)' }}>⟳ Waiting for response...</div>
+          )}
+          {error && (
+            <div style={{ padding: '8px 12px', fontSize: 11, color: '#ff5252' }}>✗ Error: {error}</div>
+          )}
+          {response && (
+            <div>
+              {/* Status line */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '6px 12px', background: 'rgba(0,0,0,0.2)'
+              }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: statusColor }}>
+                  {response.status} {response.statusText}
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>⏱ {response.duration}ms</span>
+              </div>
+
+              {/* Headers toggle */}
+              <div
+                style={{ padding: '4px 12px', cursor: 'pointer', fontSize: 10, color: 'var(--text-muted)',
+                  borderBottom: '1px solid var(--border-color)', userSelect: 'none' }}
+                onClick={() => setHeadersCollapsed(c => !c)}
+              >
+                {headersCollapsed ? '▶' : '▼'} Response Headers ({Object.keys(response.headers).length})
+              </div>
+              {!headersCollapsed && (
+                <div style={{ padding: '6px 12px', fontFamily: 'monospace', fontSize: 10,
+                  color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)',
+                  maxHeight: 120, overflowY: 'auto' }}>
+                  {Object.entries(response.headers).map(([k, v]) => (
+                    <div key={k}><span style={{ color: 'var(--accent-cyan)' }}>{k}</span>: {v}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* Body */}
+              <div
+                style={{ padding: '4px 12px', cursor: 'pointer', fontSize: 10, color: 'var(--text-muted)',
+                  borderBottom: bodyCollapsed ? 'none' : '1px solid var(--border-color)', userSelect: 'none' }}
+                onClick={() => setBodyCollapsed(c => !c)}
+              >
+                {bodyCollapsed ? '▶' : '▼'} Response Body ({response.body.length} bytes)
+              </div>
+              {!bodyCollapsed && (
+                <pre style={{
+                  margin: 0, padding: '8px 12px', fontFamily: 'monospace', fontSize: 10,
+                  color: 'var(--text-primary)', overflowX: 'auto', maxHeight: 200,
+                  overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+                }}>{response.body || '(empty body)'}</pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Message content renderer (parses code blocks) ----
+const HTTP_BLOCK_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\S/i;
+
+function renderMessageContent(content: string) {
+  const parts: React.ReactNode[] = [];
+  const segments = content.split(/(```[\s\S]*?```)/g);
+  segments.forEach((seg, idx) => {
+    const codeMatch = seg.match(/^```(\w*)\n?([\s\S]*?)```$/);
+    if (codeMatch) {
+      const lang = codeMatch[1].toLowerCase();
+      const code = codeMatch[2].trim();
+      const isHttp = lang === 'http' || lang === 'curl' || HTTP_BLOCK_RE.test(code);
+      if (isHttp) {
+        parts.push(<InlineRequestExecutor key={idx} initialRequest={code} />);
+      } else {
+        parts.push(
+          <div key={idx} style={{
+            position: 'relative', marginTop: 8, borderRadius: 6,
+            background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)', overflow: 'hidden'
+          }}>
+            {lang && <span style={{
+              position: 'absolute', top: 4, right: 8, fontSize: 9,
+              color: 'var(--text-muted)', fontFamily: 'monospace', textTransform: 'uppercase'
+            }}>{lang}</span>}
+            <pre style={{
+              margin: 0, padding: '10px 12px', fontFamily: 'monospace', fontSize: 11,
+              color: 'var(--text-primary)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto'
+            }}>{code}</pre>
+          </div>
+        );
+      }
+    } else if (seg) {
+      parts.push(<span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg}</span>);
+    }
+  });
+  return <>{parts}</>;
+}
 
 const SUGGESTIONS = [
   "Show me all captured requests",
@@ -10,16 +221,27 @@ const SUGGESTIONS = [
 ];
 
 export default function ChatPanel() {
+  // State for the active project ID (used for per‑project chat persistence)
+  const [projectId, setProjectId] = useState<string>('default');
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [isLoaded, setIsLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, toolCalls]);
+
+  // Persist chat history whenever messages change (only after initial load has finished)
+  useEffect(() => {
+    if (projectId && isLoaded) {
+      const key = `chatHistory_${projectId}`;
+      chrome.storage.local.set({ [key]: messages });
+    }
+  }, [messages, projectId, isLoaded]);
 
   // Listen for tool call updates
   useEffect(() => {
@@ -40,6 +262,40 @@ export default function ChatPanel() {
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
+  // Load current project ID and listen for project switches
+  useEffect(() => {
+    // Initial load
+    chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
+      const pid = response?.settings?.currentProjectId || 'default';
+      setProjectId(pid);
+    });
+    // Listen for settings changes (project switch)
+    const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.settings?.newValue) {
+        const newPid = (changes.settings.newValue as any).currentProjectId || 'default';
+        setProjectId(newPid);
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+    return () => chrome.storage.onChanged.removeListener(storageListener);
+  }, []);
+
+  // Load saved chat history for the active project
+  useEffect(() => {
+    if (!projectId) return;
+    setIsLoaded(false);
+    const key = `chatHistory_${projectId}`;
+    chrome.storage.local.get([key], (res) => {
+      const saved = res[key];
+      if (Array.isArray(saved)) {
+        setMessages(saved);
+      } else {
+        setMessages([]);
+      }
+      setIsLoaded(true);
+    });
+  }, [projectId]);
+
   const handleSend = async (text?: string) => {
     const msg = text || input.trim();
     if (!msg || loading) return;
@@ -56,7 +312,7 @@ export default function ChatPanel() {
     setLoading(true);
 
     chrome.runtime.sendMessage(
-      { type: 'AI_CHAT', payload: { message: msg } },
+      { type: 'AI_CHAT', payload: { message: msg, history: messages } },
       (response) => {
         setLoading(false);
         if (response?.success) {
@@ -65,6 +321,7 @@ export default function ChatPanel() {
             content: response.content,
             toolCalls: response.toolCalls,
             timestamp: Date.now(),
+            usage: response.usage,
           };
           setMessages(prev => [...prev, assistantEntry]);
           setToolCalls([]);
@@ -163,7 +420,7 @@ export default function ChatPanel() {
         {messages.map((msg, i) => (
           <div key={i} className={`chat-msg ${msg.role}`}>
             <div className="chat-msg-bubble">
-              <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+              <div>{renderMessageContent(msg.content)}</div>
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <div className="chat-tool-calls">
                   {msg.toolCalls.map((tc) => (
@@ -175,6 +432,25 @@ export default function ChatPanel() {
                       </span>
                     </div>
                   ))}
+                </div>
+              )}
+              {msg.role === 'assistant' && msg.usage && (
+                <div style={{
+                  marginTop: 8,
+                  paddingTop: 6,
+                  borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+                  fontSize: 10,
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10
+                }}>
+                  <span>⚡ Tokens:</span>
+                  <span>Prompt: <strong>{msg.usage.prompt_tokens || 0}</strong></span>
+                  <span style={{ opacity: 0.3 }}>|</span>
+                  <span>Response: <strong>{msg.usage.completion_tokens || 0}</strong></span>
+                  <span style={{ opacity: 0.3 }}>|</span>
+                  <span>Total: <strong style={{ color: 'var(--accent-cyan)' }}>{msg.usage.total_tokens || 0}</strong></span>
                 </div>
               )}
             </div>

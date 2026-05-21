@@ -6,6 +6,22 @@
 import type { ChatEntry, ToolCall, ExtensionSettings, CapturedRequest } from '../types';
 import { TOOL_DEFINITIONS, executeGetCapturedRequests, executeGetRequestDetail, executeSearchInRequests, executeAnalyzeSecurityHeaders } from './tools';
 
+function extractKeywords(text: string): string[] {
+  if (!text) return [];
+  const words = text.toLowerCase()
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"']/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+  
+  const stopwords = new Set([
+    'dan', 'yang', 'di', 'ke', 'dari', 'ini', 'itu', 'dengan', 'untuk', 'pada', 'adalah', 'yaitu', 'yakni',
+    'saya', 'anda', 'kami', 'mereka', 'dia', 'kita', 'ada', 'bisa', 'akan', 'telah', 'sudah', 'oleh', 'atau',
+    'the', 'and', 'a', 'to', 'of', 'in', 'is', 'it', 'you', 'that', 'he', 'was', 'for', 'on', 'are', 'as', 'with'
+  ]);
+  
+  return Array.from(new Set(words.filter(w => !stopwords.has(w))));
+}
+
 const SYSTEM_PROMPT = `You are BrowseLens AI, an offensive security research assistant integrated into a Chrome extension. You help professional security researchers and hackers analyze HTTP traffic, find vulnerabilities, and craft exploits.
 
 Your capabilities (via tools):
@@ -69,13 +85,55 @@ export class AIAgent {
   async chat(
     userMessage: string,
     history: ChatEntry[]
-  ): Promise<{ content: string; toolCalls: ToolCall[] }> {
+  ): Promise<{
+    content: string;
+    toolCalls: ToolCall[];
+    usage?: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+  }> {
+    // --- KEYWORD-BASED LOCAL RAG RETRIEVAL (BM25 STYLE) ---
+    const keywords = extractKeywords(userMessage);
+
+    // 1. Sliding Window: Keep the very last 4 messages (2 user, 2 assistant turns) for conversational continuity
+    const slidingCount = 4;
+    const slidingWindow = history.slice(-slidingCount);
+    const olderHistory = history.slice(0, Math.max(0, history.length - slidingCount));
+
+    const retrievedEntries: ChatEntry[] = [];
+    if (keywords.length > 0 && olderHistory.length > 0) {
+      const scoredOlder = olderHistory.map(entry => {
+        let score = 0;
+        const contentLower = (entry.content || '').toLowerCase();
+        for (const kw of keywords) {
+          if (contentLower.includes(kw)) {
+            score += 1;
+          }
+        }
+        return { entry, score };
+      }).filter(item => item.score > 0);
+
+      // Sort descending by relevance score, take the top 4 matches
+      scoredOlder.sort((a, b) => b.score - a.score);
+      retrievedEntries.push(...scoredOlder.slice(0, 4).map(item => item.entry));
+    }
+
+    // Inject RAG context into the SYSTEM PROMPT
+    let ragSystemPrompt = this.settings.ai.systemPrompt || SYSTEM_PROMPT;
+    if (retrievedEntries.length > 0) {
+      ragSystemPrompt += "\n\n=== RELEVANT CONTEXT FROM PAST CHATS ===\n" +
+        retrievedEntries.map(e => `[${e.role === 'user' ? 'User' : 'Assistant'}]: ${e.content}`).join("\n") +
+        "\n=======================================";
+    }
+
     const messages: ChatCompletionMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: ragSystemPrompt },
     ];
 
-    // Add history
-    for (const entry of history.slice(-20)) {
+    // Add only sliding window history (recent 4 messages) to prevent token bloat
+    for (const entry of slidingWindow) {
       messages.push({
         role: entry.role as 'user' | 'assistant',
         content: entry.content,
@@ -88,10 +146,17 @@ export class AIAgent {
     const allToolCalls: ToolCall[] = [];
     let maxIterations = 10;
     let finalContent = '';
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
 
     // Agentic loop
     while (maxIterations-- > 0) {
       const response = await this.callLLM(messages);
+
+      if (response.usage) {
+        totalPromptTokens += response.usage.prompt_tokens || 0;
+        totalCompletionTokens += response.usage.completion_tokens || 0;
+      }
 
       if (response.content) {
         finalContent += (finalContent ? '\n\n' : '') + response.content;
@@ -147,7 +212,15 @@ export class AIAgent {
       finalContent = "_I have executed the requested tools, but did not generate a final text summary._";
     }
 
-    return { content: finalContent, toolCalls: allToolCalls };
+    return {
+      content: finalContent,
+      toolCalls: allToolCalls,
+      usage: {
+        prompt_tokens: totalPromptTokens,
+        completion_tokens: totalCompletionTokens,
+        total_tokens: totalPromptTokens + totalCompletionTokens
+      }
+    };
   }
 
   /** Call the LLM API (OpenAI-compatible) */
@@ -158,6 +231,11 @@ export class AIAgent {
       type: 'function';
       function: { name: string; arguments: string };
     }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
   }> {
     const { baseUrl, model, apiKey } = this.settings.ai;
 
@@ -166,10 +244,6 @@ export class AIAgent {
       messages,
       tools: TOOL_DEFINITIONS,
     };
-
-    // Note: We omit max_tokens, max_completion_tokens, and temperature
-    // to ensure maximum compatibility across standard and advanced (e.g., o1/gpt5) models.
-    // The APIs will use their safe defaults.
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -202,6 +276,7 @@ export class AIAgent {
     return {
       content: choice.content,
       tool_calls: choice.tool_calls,
+      usage: data.usage,
     };
   }
 

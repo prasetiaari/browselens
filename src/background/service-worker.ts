@@ -663,6 +663,50 @@ function normalizeJsUrl(urlStr?: string): string {
     return String(urlStr).split('?')[0];
   }
 }
+function parseRawHTTPRequest(raw: string): { url: string; method: string; headers: Record<string, string>; body?: string } {
+  const lines = raw.trim().split(/\r?\n/);
+  const [requestLine, ...headerAndBodyLines] = lines;
+  const [method, pathAndProtocol] = (requestLine || 'GET /').trim().split(/\s+/);
+  
+  let headerEndIndex = headerAndBodyLines.indexOf('');
+  if (headerEndIndex === -1) {
+    headerEndIndex = headerAndBodyLines.length;
+  }
+  
+  const headers: Record<string, string> = {};
+  for (let i = 0; i < headerEndIndex; i++) {
+    const line = headerAndBodyLines[i].trim();
+    if (!line) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx !== -1) {
+      const name = line.substring(0, colonIdx).trim();
+      const value = line.substring(colonIdx + 1).trim();
+      headers[name] = value;
+    }
+  }
+  
+  const body = headerAndBodyLines.slice(headerEndIndex + 1).join('\n').trim();
+  
+  let path = pathAndProtocol || '/';
+  const spaceIdx = path.indexOf(' ');
+  if (spaceIdx !== -1) {
+    path = path.substring(0, spaceIdx);
+  }
+  
+  let url = path;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const host = headers['Host'] || headers['host'] || 'localhost';
+    const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+    url = `${protocol}://${host}${path}`;
+  }
+  
+  return {
+    url,
+    method: method || 'GET',
+    headers,
+    body: body || undefined
+  };
+}
 
 // ---- Message Handling ----
 chrome.runtime.onMessage.addListener(
@@ -1059,6 +1103,47 @@ async function handleMessage(
       break;
     }
 
+    case 'EXECUTE_RAW_HTTP': {
+      const { rawRequest } = message.payload as { rawRequest: string };
+      try {
+        const parsed = parseRawHTTPRequest(rawRequest);
+        const startTime = Date.now();
+        const response = await fetch(parsed.url, {
+          method: parsed.method,
+          headers: parsed.headers,
+          body: parsed.body || undefined,
+        });
+        const duration = Date.now() - startTime;
+
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+
+        let responseBody = '';
+        try {
+          responseBody = await response.text();
+        } catch {
+          responseBody = '[Could not read response body]';
+        }
+
+        sendResponse({
+          success: true,
+          status: response.status,
+          statusText: response.statusText,
+          headers: responseHeaders,
+          body: responseBody,
+          duration,
+        });
+      } catch (err) {
+        sendResponse({
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      break;
+    }
+
     case 'REPLAY_REQUEST': {
       const { method, url, headers, body } = message.payload as {
         method: string;
@@ -1163,7 +1248,7 @@ async function handleMessage(
     }
 
     case 'AI_CHAT': {
-      const { message: userMsg } = message.payload as { message: string };
+      const { message: userMsg, history } = message.payload as { message: string; history?: ChatEntry[] };
 
       try {
         const agent = new AIAgent(settings, capturedRequests, {
@@ -1175,22 +1260,22 @@ async function handleMessage(
           },
         });
 
-        const result = await agent.chat(userMsg, chatHistory);
+        const currentHistory = history || [];
+        const result = await agent.chat(userMsg, currentHistory);
 
-        // Save to history
-        chatHistory.push({
+        // Sync background global chatHistory for fallback/debug purposes
+        chatHistory = [...currentHistory, {
           role: 'user',
           content: userMsg,
           timestamp: Date.now(),
-        });
-        chatHistory.push({
+        }, {
           role: 'assistant',
           content: result.content,
           toolCalls: result.toolCalls,
           timestamp: Date.now(),
-        });
+          usage: result.usage,
+        }];
 
-        // Keep history manageable
         if (chatHistory.length > 100) {
           chatHistory = chatHistory.slice(-100);
         }
@@ -1199,6 +1284,7 @@ async function handleMessage(
           success: true,
           content: result.content,
           toolCalls: result.toolCalls,
+          usage: result.usage,
         });
       } catch (err) {
         sendResponse({

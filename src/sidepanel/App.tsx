@@ -187,6 +187,23 @@ export default function App() {
     setActiveNetworkTab('requester');
   }, []);
 
+  // Listen for send-to-repeater events dispatched from InlineRequestExecutor in ChatPanel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ method: string; url: string; headers: Record<string, string>; body: string }>).detail;
+      setRepeaterRequest({
+        method: detail.method,
+        url: detail.url,
+        headers: JSON.stringify(detail.headers, null, 2),
+        body: detail.body || '',
+      });
+      setActiveNetworkTab('requester');
+      setActiveMainTab('network');
+    };
+    window.addEventListener('send-to-repeater', handler);
+    return () => window.removeEventListener('send-to-repeater', handler);
+  }, []);
+
   const handleAskAI = useCallback((prompt: string) => {
     setActiveMainTab('chat');
     setTimeout(() => {

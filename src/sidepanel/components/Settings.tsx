@@ -170,6 +170,31 @@ export default function Settings({ settings, onSave }: Props) {
                   />
                 </div>
               )}
+
+              <div className="settings-field" style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>AI System Prompt</label>
+                <textarea
+                  value={local.ai.systemPrompt || ''}
+                  onChange={e => setLocal({ ...local, ai: { ...local.ai, systemPrompt: e.target.value } })}
+                  placeholder="You are BrowseLens AI..."
+                  rows={14}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'var(--bg-darker)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 4,
+                    color: 'var(--text-primary)',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    lineHeight: '1.5',
+                    resize: 'vertical',
+                    minHeight: 250
+                  }}
+                />
+              </div>
             </div>
 
             {/* STORAGE SETTINGS */}
