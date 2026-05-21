@@ -1078,11 +1078,11 @@ ${formInputs}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
                     <label className="tool-inner-label-sub">🛡️ Header (JSON)</label>
-                    <textarea className="tool-textarea" style={{ height: 160, color: '#ff3366', fontSize: 10 }} value={jwtHeader} onChange={e => setJwtHeader(e.target.value)} />
+                    <textarea className="tool-textarea" style={{ minHeight: 260, height: 260, color: '#ff3366', fontSize: 10 }} value={jwtHeader} onChange={e => setJwtHeader(e.target.value)} />
                   </div>
                   <div>
                     <label className="tool-inner-label-sub">📦 Payload (JSON)</label>
-                    <textarea className="tool-textarea" style={{ height: 160, color: 'var(--accent-cyan)', fontSize: 10 }} value={jwtPayload} onChange={e => setJwtPayload(e.target.value)} />
+                    <textarea className="tool-textarea" style={{ minHeight: 260, height: 260, color: 'var(--accent-cyan)', fontSize: 10 }} value={jwtPayload} onChange={e => setJwtPayload(e.target.value)} />
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
