@@ -80,6 +80,61 @@ export function runPassiveScan(req: CapturedRequest): string[] {
     }
   }
 
+  // 6. Reflected XSS / Input Reflection (Simple Grading)
+  if (req.responseBody && req.url && isHtml) {
+    try {
+      const urlObj = new URL(req.url);
+      const params = urlObj.searchParams;
+
+      const checkReflection = (value: string, key: string, source: 'URL' | 'POST') => {
+        if (!value || value.length < 3) return; // ignore extremely short values
+        
+        if (req.responseBody!.includes(value)) {
+          const hasHtmlTags = /[<>]/.test(value);
+          const hasSpecialChars = /["';()]/.test(value);
+
+          if (hasHtmlTags) {
+            vulns.push(`Reflected XSS [🔴 Score 9 - HIGH]: ${source} parameter "${key}" value containing raw HTML (${value}) is reflected in response!`);
+          } else if (hasSpecialChars) {
+            vulns.push(`Reflection [🟡 Score 5 - MEDIUM]: ${source} parameter "${key}" value containing unescaped special characters (${value}) is reflected in response!`);
+          } else {
+            vulns.push(`Reflection [🟢 Score 2 - INFO]: ${source} parameter "${key}" value (${value}) is reflected in response.`);
+          }
+        }
+      };
+
+      // Check URL params
+      params.forEach((value, key) => {
+        checkReflection(value, key, 'URL');
+      });
+
+      // Check POST Body params
+      if (req.requestBody && req.method === 'POST') {
+        let postParams: Record<string, any> = {};
+        if (req.requestBody.startsWith('{')) {
+          try {
+            postParams = JSON.parse(req.requestBody);
+          } catch (_) {}
+        } else {
+          const searchParams = new URLSearchParams(req.requestBody);
+          searchParams.forEach((val, k) => {
+            postParams[k] = val;
+          });
+        }
+
+        const traversePostParams = (val: any, k: string) => {
+          if (typeof val === 'string') {
+            checkReflection(val, k, 'POST');
+          } else if (typeof val === 'object' && val !== null) {
+            Object.entries(val).forEach(([subK, subV]) => traversePostParams(subV, `${k}.${subK}`));
+          }
+        };
+
+        Object.entries(postParams).forEach(([k, v]) => traversePostParams(v, k));
+      }
+    } catch (_) {}
+  }
+
   // Deduplicate findings
   return Array.from(new Set(vulns));
 }
