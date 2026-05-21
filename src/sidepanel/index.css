@@ -1676,6 +1676,53 @@ body {
   font-size: 12px !important;
 }
 
+/* ============================================================
+   BrowseLens JWT Playground Font-Size Scaling
+   ============================================================ */
+
+.jwt-tool textarea,
+.jwt-tool .tool-textarea,
+.jwt-tool .tool-textarea-readonly {
+  font-size: 14.5px !important;
+  font-family: var(--font-mono) !important;
+  line-height: 1.5 !important;
+}
+
+.jwt-tool input,
+.jwt-tool .tool-input-field {
+  font-size: 14px !important;
+  font-family: var(--font-mono) !important;
+}
+
+.jwt-tool label,
+.jwt-tool .tool-inner-label,
+.jwt-tool .tool-inner-label-sub {
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+}
+
+.jwt-tool button,
+.jwt-tool .tool-btn-primary,
+.jwt-tool .tool-btn-exploit,
+.jwt-tool .tool-copy-trigger {
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+}
+
+.jwt-tool .jwt-audit-panel h4 {
+  font-size: 15px !important;
+  font-weight: 750 !important;
+}
+
+.jwt-tool .jwt-audit-panel span {
+  font-size: 13px !important;
+}
+
+.jwt-tool .jwt-audit-panel div {
+  font-size: 13px !important;
+  font-family: var(--font-mono) !important;
+}
+
 
 
 
