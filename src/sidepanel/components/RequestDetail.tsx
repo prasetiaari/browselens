@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { CapturedRequest } from '../../shared/types';
 
 type DetailTab = 'headers' | 'body' | 'response';
@@ -11,6 +11,7 @@ interface Props {
   onClose: () => void;
   onSendToBase64?: (text: string) => void;
   onSendToJwt?: (text: string) => void;
+  onUpdateRequest?: (req: CapturedRequest) => void;
 }
 
 function getStatusClass(status?: number): string {
@@ -78,7 +79,7 @@ function decodeJwt(token: string): { header: string; payload: string; error?: st
 
 import { exportToCurl, exportToPython, exportToFetch } from '../../shared/export';
 
-export default function RequestDetail({ request, allRequests = [], onSendToRepeater, onAskAI, onClose, onSendToBase64, onSendToJwt }: Props) {
+export default function RequestDetail({ request, allRequests = [], onSendToRepeater, onAskAI, onClose, onSendToBase64, onSendToJwt, onUpdateRequest }: Props) {
   const [activeTab, setActiveTab] = useState<DetailTab>('headers');
   const [exporting, setExporting] = useState(false);
   const [decodedB64Val, setDecodedB64Val] = useState<string | null>(null);
@@ -86,6 +87,12 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
   const [modalCopied, setModalCopied] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
   const [showNotesInput, setShowNotesInput] = useState(false);
+  const [localNotes, setLocalNotes] = useState(request.notes || '');
+  const notesTimeoutRef = useRef<any | null>(null);
+
+  useEffect(() => {
+    setLocalNotes(request.notes || '');
+  }, [request.id, request.notes]);
 
   // Extract all unique remoteIp addresses captured for this request's hostname
   const resolvedIps = (() => {
@@ -193,12 +200,17 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
   };
 
   const handleUpdateNotes = (notesText: string) => {
+    setLocalNotes(notesText);
+    if (onUpdateRequest) {
+      onUpdateRequest({ ...request, notes: notesText });
+    }
     chrome.runtime.sendMessage({
       type: 'UPDATE_REQUEST_NOTES',
       payload: { id: request.id, notes: notesText }
     });
     setNotesSaved(true);
-    setTimeout(() => setNotesSaved(false), 1200);
+    if (notesTimeoutRef.current) clearTimeout(notesTimeoutRef.current);
+    notesTimeoutRef.current = setTimeout(() => setNotesSaved(false), 1200);
   };
 
   const handleExport = async (type: string) => {
@@ -238,6 +250,9 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
                 className="tag-selector-btn"
                 onClick={() => {
                   const newTag = request.tag === tag ? 'none' : tag;
+                  if (onUpdateRequest) {
+                    onUpdateRequest({ ...request, tag: newTag });
+                  }
                   chrome.runtime.sendMessage({
                     type: 'UPDATE_REQUEST_TAG',
                     payload: { id: request.id, tag: newTag }
@@ -613,7 +628,7 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
                   </div>
                 </div>
                 <textarea
-                  value={request.notes || ''}
+                  value={localNotes}
                   onChange={(e) => handleUpdateNotes(e.target.value)}
                   placeholder="Type exploit notes, parameter findings, or custom vulnerabilities here... (auto-saved)"
                   style={{

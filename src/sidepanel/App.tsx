@@ -211,6 +211,11 @@ export default function App() {
     }, 100);
   }, []);
 
+  const handleUpdateRequest = useCallback((updatedReq: CapturedRequest) => {
+    setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
+    setSelectedRequest(prev => prev && prev.id === updatedReq.id ? updatedReq : prev);
+  }, []);
+
   const handleSelectRequest = useCallback((req: CapturedRequest) => {
     if (selectMode) {
       setSelectedIds(prev => {
@@ -1301,6 +1306,7 @@ export default function App() {
                         onClose={() => setSelectedRequest(null)}
                         onSendToBase64={handleSendToBase64}
                         onSendToJwt={handleSendToJwt}
+                        onUpdateRequest={handleUpdateRequest}
                       />
                     </div>
                   )
