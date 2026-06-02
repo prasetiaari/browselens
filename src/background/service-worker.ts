@@ -25,6 +25,7 @@ function safeTruncate(body: string | undefined, maxChars: number = 150000): stri
 
 // ---- In-Memory State ----
 let capturedRequests: CapturedRequest[] = [];
+let requestCounter: number = 1;
 let chatHistory: ChatEntry[] = [];
 let settings: ExtensionSettings = { ...DEFAULT_SETTINGS };
 
@@ -260,10 +261,17 @@ async function loadRequests() {
         }
       }
     }
+    
+    // Compute requestCounter for shortId assignment
+    requestCounter = capturedRequests.length > 0 
+      ? Math.max(...capturedRequests.map(r => parseInt(r.shortId || '0', 10) || 0)) + 1 
+      : 1;
+
   } catch (err) {
     console.error('[BrowseLens] Failed to load requests:', err);
     logDebug(`loadRequests FAILED: ${err}`);
     capturedRequests = [];
+    requestCounter = 1;
   }
 }
 
@@ -517,42 +525,59 @@ chrome.sidePanel
 
 // ---- Debugger Capture (Replaces WebRequest) ----
 class DebuggerManager {
-  public attachedTabId: number | null = null;
+  public attachedTabIds = new Set<number>();
+  public trackedTabIds = new Set<number>();
   private pendingRequests = new Map<string, Partial<CapturedRequest>>();
+
+  trackTab(tabId: number) {
+    this.trackedTabIds.add(tabId);
+  }
+
+  untrackTab(tabId: number) {
+    this.trackedTabIds.delete(tabId);
+    this.detach(tabId);
+  }
+
+  untrackAll() {
+    this.trackedTabIds.clear();
+    this.detachAll();
+  }
 
   async attachToTab(tabId: number) {
     if (!settings.capture.enabled) return;
-    if (this.attachedTabId === tabId) return;
-
-    // Detach from previous
-    await this.detach();
+    if (this.attachedTabIds.has(tabId)) return;
 
     try {
-      this.attachedTabId = tabId;
+      this.attachedTabIds.add(tabId);
       await chrome.debugger.attach({ tabId }, '1.3');
       await chrome.debugger.sendCommand({ tabId }, 'Network.enable');
       console.log(`[BrowseLens] Debugger attached to tab ${tabId}`);
     } catch (err) {
       console.error(`[BrowseLens] Failed to attach debugger to ${tabId}:`, err);
-      this.attachedTabId = null;
+      this.attachedTabIds.delete(tabId);
     }
   }
 
-  async detach() {
-    if (this.attachedTabId) {
-      const tabId = this.attachedTabId;
-      this.attachedTabId = null;
+  async detach(tabId: number) {
+    if (this.attachedTabIds.has(tabId)) {
+      this.attachedTabIds.delete(tabId);
       try {
         await chrome.debugger.detach({ tabId });
       } catch (err) {
         // Ignore detach errors
       }
     }
+  }
+
+  async detachAll() {
+    for (const tabId of this.attachedTabIds) {
+      await this.detach(tabId);
+    }
     this.pendingRequests.clear();
   }
 
   handleEvent(source: chrome.debugger.Debuggee, method: string, params: any) {
-    if (source.tabId !== this.attachedTabId) return;
+    if (!source.tabId || !this.attachedTabIds.has(source.tabId)) return;
 
     const requestId = params.requestId;
 
@@ -562,6 +587,7 @@ class DebuggerManager {
 
       this.pendingRequests.set(requestId, {
         id: `dbg-${requestId}-${Date.now()}`,
+        shortId: (requestCounter++).toString(),
         timestamp: Date.now(),
         tabId: source.tabId,
         source: 'devtools',
@@ -609,46 +635,40 @@ const debuggerManager = new DebuggerManager();
 
 chrome.debugger.onEvent.addListener(debuggerManager.handleEvent.bind(debuggerManager));
 chrome.debugger.onDetach.addListener((source) => {
-  if (source.tabId === debuggerManager.attachedTabId) {
-    debuggerManager.attachedTabId = null;
-  }
-});
-
-// Auto-attach when active tab changes
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  if (settings.capture.enabled) {
-    const tab = await chrome.tabs.get(activeInfo.tabId).catch(() => null);
-    if (tab && tab.url && isUrlInScope(tab.url)) {
-      await debuggerManager.attachToTab(activeInfo.tabId);
-    } else {
-      await debuggerManager.detach();
-    }
+  if (source.tabId && debuggerManager.attachedTabIds.has(source.tabId)) {
+    debuggerManager.attachedTabIds.delete(source.tabId);
   }
 });
 
 // Auto-attach/detach when tab URL updates (e.g. navigation)
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (settings.capture.enabled && tab.active) {
-    const urlToCheck = changeInfo.url || tab.url;
-    if (urlToCheck) {
-      if (isUrlInScope(urlToCheck)) {
-        await debuggerManager.attachToTab(tabId);
-      } else {
-        // If we are currently attached to this tab but it went out of scope, detach!
-        if (debuggerManager.attachedTabId === tabId) {
-          await debuggerManager.detach();
+  if (settings.capture.enabled) {
+    if (debuggerManager.trackedTabIds.has(tabId)) {
+      const urlToCheck = changeInfo.url || tab.url;
+      if (urlToCheck) {
+        if (isUrlInScope(urlToCheck)) {
+          await debuggerManager.attachToTab(tabId);
+        } else {
+          await debuggerManager.detach(tabId);
         }
       }
     }
   }
 });
 
-// Auto-attach on load/reload
-chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-  if (settings.capture.enabled && tabs[0] && tabs[0].id && tabs[0].url && isUrlInScope(tabs[0].url)) {
-    debuggerManager.attachToTab(tabs[0].id);
+// Auto-attach to newly created tabs if they were spawned from a tracked tab (e.g. clicked links)
+chrome.tabs.onCreated.addListener(async (tab) => {
+  if (settings.capture.enabled && tab.id) {
+    if (tab.openerTabId && debuggerManager.trackedTabIds.has(tab.openerTabId)) {
+      debuggerManager.trackTab(tab.id);
+      if (tab.url && isUrlInScope(tab.url)) {
+        await debuggerManager.attachToTab(tab.id);
+      }
+    }
   }
 });
+
+// Remove the global query on load so it doesn't arbitrarily attach to the active tab if it wasn't the target.
 
 function normalizeJsUrl(urlStr?: string): string {
   if (!urlStr) return '';
@@ -710,20 +730,37 @@ function parseRawHTTPRequest(raw: string): { url: string; method: string; header
 
 // ---- Message Handling ----
 chrome.runtime.onMessage.addListener(
-  (message: ExtensionMessage, _sender, sendResponse) => {
-    handleMessage(message, sendResponse);
+  (message: ExtensionMessage, sender, sendResponse) => {
+    if (message.type === 'SEND_TO_REPEATER') {
+      const tab = sender.tab;
+      if (tab?.windowId && chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
+        chrome.sidePanel.open({ windowId: tab.windowId }).catch((err) => {
+          console.warn('[BrowseLens] Failed to open sidepanel via message:', err);
+        });
+      }
+    }
+    handleMessage(message, sendResponse, sender);
     return true; // Keep message channel open for async responses
   }
 );
 
 async function handleMessage(
   message: ExtensionMessage,
-  sendResponse: (response: unknown) => void
+  sendResponse: (response: unknown) => void,
+  sender?: chrome.runtime.MessageSender
 ) {
   await ensureInit();
   switch (message.type) {
     case 'DEVTOOLS_REQUEST_CAPTURED':
     case 'REQUEST_CAPTURED': {
+      // Ignore content script captures from tabs other than our explicitly tracked ones
+      if (sender && sender.tab && sender.tab.id !== undefined) {
+        if (!debuggerManager.attachedTabIds.has(sender.tab.id)) {
+          sendResponse({ success: false, reason: 'not target tab' });
+          return;
+        }
+      }
+
       const request = message.payload as CapturedRequest;
       logDebug(`REQUEST_CAPTURED received - id: ${request.id}, url: ${request.url ? request.url.substring(0, 60) : 'none'}`);
       if (!request || !request.url) {
@@ -1173,61 +1210,6 @@ async function handleMessage(
           responseBody = '[Could not read response body]';
         }
 
-        // Create CapturedRequest representation for Requester/Repeater replayed requests
-        const replayedRequest: CapturedRequest = {
-          id: `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          timestamp: startTime,
-          source: 'requester',
-          method,
-          url,
-          requestHeaders: headers,
-          requestBody: body || undefined,
-          requestBodySize: body ? body.length : 0,
-          status: response.status,
-          statusText: response.statusText,
-          responseHeaders,
-          responseBody: responseBody,
-          responseBodySize: responseBody.length,
-          mimeType: responseHeaders['content-type'] || responseHeaders['Content-Type'] || 'text/plain',
-          duration,
-        };
-
-        // Passive scan and save to project history
-        try {
-          replayedRequest.vulnerabilities = runPassiveScan(replayedRequest);
-        } catch (scanErr) {
-          console.error('[BrowseLens] Passive scan failed for replayed request:', scanErr);
-        }
-
-        // Limit manual replayed request/response size to prevent storage failures
-        const MAX_BODY_SIZE = 150 * 1024; // 150 KB
-        if (replayedRequest.responseBody && replayedRequest.responseBody.length > MAX_BODY_SIZE) {
-          replayedRequest.responseBody = replayedRequest.responseBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Response Body Truncated (Exceeds 150KB Limit) ...]';
-          replayedRequest.responseBodySize = replayedRequest.responseBody.length;
-        }
-        if (replayedRequest.requestBody && replayedRequest.requestBody.length > MAX_BODY_SIZE) {
-          replayedRequest.requestBody = replayedRequest.requestBody.substring(0, MAX_BODY_SIZE) + '\n\n[... Request Body Truncated (Exceeds 150KB Limit) ...]';
-          replayedRequest.requestBodySize = replayedRequest.requestBody.length;
-        }
-
-        capturedRequests.push(replayedRequest);
-        const historyLimit = settings.capture.maxHistoryLimit || 1000;
-        if (capturedRequests.length > historyLimit) {
-          const projId = settings.currentProjectId || 'default';
-          const removed = capturedRequests.slice(0, capturedRequests.length - historyLimit);
-          capturedRequests = capturedRequests.slice(-historyLimit);
-          
-          const keysToDelete = removed.map(r => `request_${projId}_${r.id}`);
-          chrome.storage.local.remove(keysToDelete).catch(() => {});
-        }
-        await saveSingleRequest(replayedRequest);
-
-        // Broadcast to all open side panels so they update dynamically in real time
-        chrome.runtime.sendMessage({
-          type: 'REQUEST_CAPTURED',
-          payload: replayedRequest,
-        }).catch(() => {});
-
         sendResponse({
           success: true,
           response: {
@@ -1311,16 +1293,24 @@ async function handleMessage(
       }
       
       // Handle debugger state
-      if (settings.capture.enabled && !oldEnabled) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0] && tabs[0].id && tabs[0].url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('chrome-extension://')) {
-            debuggerManager.attachToTab(tabs[0].id);
-          }
-        });
-      } else if (!settings.capture.enabled && oldEnabled) {
-        await debuggerManager.detach();
+      if (!settings.capture.enabled && oldEnabled) {
+        debuggerManager.untrackAll();
       }
 
+      sendResponse({ success: true });
+      break;
+    }
+
+    case 'ATTACH_TO_TAB': {
+      const { tabId } = message.payload as { tabId: number };
+      if (settings.capture.enabled) {
+        debuggerManager.trackTab(tabId);
+        chrome.tabs.get(tabId, (tab) => {
+          if (tab && tab.url && isUrlInScope(tab.url)) {
+            debuggerManager.attachToTab(tabId);
+          }
+        });
+      }
       sendResponse({ success: true });
       break;
     }
@@ -1354,14 +1344,63 @@ async function handleMessage(
   }
 }
 
+// Define session rules to strip frame restrictions for our local iframe
+async function setupDeclarativeRules() {
+  try {
+    const rules: chrome.declarativeNetRequest.Rule[] = [
+      {
+        id: 101,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+          responseHeaders: [
+            {
+              header: "x-frame-options",
+              operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE
+            },
+            {
+              header: "content-security-policy",
+              operation: chrome.declarativeNetRequest.HeaderOperation.REMOVE
+            }
+          ]
+        },
+        condition: {
+          initiatorDomains: [chrome.runtime.id],
+          resourceTypes: [
+            chrome.declarativeNetRequest.ResourceType.SUB_FRAME,
+            chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST
+          ]
+        }
+      }
+    ];
+
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [101],
+      addRules: rules
+    });
+    logDebug('[BrowseLens] DNR Header Stripping Session Rules initialized.');
+  } catch (err) {
+    console.error('[BrowseLens] Failed to initialize DNR Header Stripping:', err);
+  }
+}
+
 // ---- Context Menus for Selected Text ----
 chrome.runtime.onInstalled.addListener(() => {
+  setupDeclarativeRules().catch(console.error);
+
   // Clear any existing menus to avoid duplicate ID errors
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "browse-lens-parent",
       title: "🔍 BrowseLens Tools",
-      contexts: ["selection"]
+      contexts: ["selection", "link"]
+    });
+
+    chrome.contextMenus.create({
+      parentId: "browse-lens-parent",
+      id: "open-minibrowser",
+      title: "🌐 Open in Mini Browser",
+      contexts: ["selection", "link"]
     });
 
     chrome.contextMenus.create({
@@ -1394,9 +1433,26 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+chrome.runtime.onStartup.addListener(() => {
+  setupDeclarativeRules().catch(console.error);
+});
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  const selectedText = info.selectionText;
+  const selectedText = info.selectionText || info.linkUrl;
   if (!selectedText) return;
+
+  if (info.menuItemId === "open-minibrowser") {
+    // Inject floating minibrowser modal in the target active tab
+    if (tab?.id) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: "INJECT_MINIBROWSER_MODAL",
+        url: selectedText
+      }).catch((err) => {
+        console.warn('[BrowseLens] Failed to send message to inject minibrowser modal:', err);
+      });
+    }
+    return;
+  }
 
   // 1. Save action payload to storage so the sidepanel can pick it up on mount/load
   await chrome.storage.local.set({

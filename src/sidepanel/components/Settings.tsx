@@ -53,6 +53,15 @@ export default function Settings({ settings, onSave }: Props) {
           onSave(local);
           setSaved(true);
           setTimeout(() => setSaved(false), 2000);
+          
+          // If capture was just enabled, explicitly attach to the current window's active tab
+          if (local.capture.enabled) {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+              if (tabs[0] && tabs[0].id) {
+                chrome.runtime.sendMessage({ type: 'ATTACH_TO_TAB', payload: { tabId: tabs[0].id } });
+              }
+            });
+          }
         }
       }
     );
@@ -158,6 +167,19 @@ export default function Settings({ settings, onSave }: Props) {
                 />
               </div>
 
+              <div className="settings-field" style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Max Payload Truncation (chars)</label>
+                <input
+                  type="number"
+                  value={local.ai.maxPayloadSize || 1500}
+                  onChange={e => setLocal({ ...local, ai: { ...local.ai, maxPayloadSize: parseInt(e.target.value) || 1500 } })}
+                  style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-darker)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Increase if your AI has a large context window (e.g. 10000). Keep small (1500) for 4B/7B models to prevent hallucination loops.
+                </div>
+              </div>
+
               {local.ai.provider === 'openai' && (
                 <div className="settings-field" style={{ marginBottom: 12 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>API Key</label>
@@ -170,6 +192,18 @@ export default function Settings({ settings, onSave }: Props) {
                   />
                 </div>
               )}
+
+              <div className="settings-field" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  id="allowAutoRequest"
+                  checked={local.ai.allowAutoRequest || false}
+                  onChange={e => setLocal({ ...local, ai: { ...local.ai, allowAutoRequest: e.target.checked } })}
+                />
+                <label htmlFor="allowAutoRequest" style={{ fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                  Allow AI to autonomously send HTTP requests (DANGEROUS)
+                </label>
+              </div>
 
               <div className="settings-field" style={{ marginBottom: 12 }}>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>AI System Prompt</label>

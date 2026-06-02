@@ -19,7 +19,13 @@
     "default_path": "src/sidepanel/index.html"
   },
   "action": {
-    "default_title": "BrowseLens"
+    "default_title": "BrowseLens",
+    "default_icon": {
+      "16": "public/icons/icon-16.png",
+      "32": "public/icons/icon-32.png",
+      "48": "public/icons/icon-48.png",
+      "128": "public/icons/icon-128.png"
+    }
   },
   "background": {
     "service_worker": "src/background/service-worker.ts",
@@ -31,12 +37,6 @@
       "matches": ["<all_urls>"],
       "js": ["src/content/relay.ts"],
       "run_at": "document_start"
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/content.ts"],
-      "run_at": "document_start",
-      "world": "MAIN"
     }
   ],
   "icons": {
@@ -44,5 +44,14 @@
     "32": "public/icons/icon-32.png",
     "48": "public/icons/icon-48.png",
     "128": "public/icons/icon-128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/sidepanel/minibrowser.html",
+        "assets/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

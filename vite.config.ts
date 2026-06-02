@@ -22,6 +22,7 @@ export default defineConfig({
       input: {
         sidepanel: 'src/sidepanel/index.html',
         devtools: 'src/devtools/devtools.html',
+        minibrowser: 'src/sidepanel/minibrowser.html',
       },
     },
   },

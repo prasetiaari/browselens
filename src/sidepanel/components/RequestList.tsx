@@ -28,6 +28,8 @@ function formatTime(timestamp: number): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
 }
 
+// Hash function removed, using real shortId now
+
 interface Props {
   requests: CapturedRequest[];
   selected: CapturedRequest | null;
@@ -82,9 +84,12 @@ export default function RequestList({ requests, selected, selectedList, onSelect
                 }}
               />
             )}
-            <span className="request-time">
-            {formatTime(req.timestamp)}
-          </span>
+            <span className="request-time" style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', background: 'rgba(255,255,255,0.05)', padding: '1px 4px', borderRadius: 3 }}>
+                #{req.shortId}
+              </span>
+              <span>{formatTime(req.timestamp)}</span>
+            </span>
           <span className={`request-method ${req.method}`}>
             {req.method}
           </span>

@@ -5,6 +5,7 @@
 /** A captured HTTP request with its response */
 export interface CapturedRequest {
   id: string;
+  shortId?: string;
   timestamp: number;
   tabId?: number;
   source: 'devtools' | 'content-script' | 'requester';
@@ -60,7 +61,10 @@ export type MessageType =
   | 'SWITCH_PROJECT'
   | 'DELETE_REQUEST'
   | 'DELETE_FILTERED_REQUESTS'
-  | 'EXECUTE_RAW_HTTP';
+  | 'EXECUTE_RAW_HTTP'
+  | 'SEND_TO_REPEATER'
+  | 'INJECT_MINIBROWSER_MODAL'
+  | 'ATTACH_TO_TAB';
 
 export interface ExtensionMessage {
   type: MessageType;
@@ -160,6 +164,8 @@ export interface ExtensionSettings {
     model: string;
     apiKey?: string;
     systemPrompt?: string;
+    allowAutoRequest?: boolean;
+    maxPayloadSize?: number;
   };
   capture: {
     filterTypes: string[]; // 'xhr', 'fetch', 'document', 'script', 'stylesheet', 'image', 'font', 'other'
@@ -179,6 +185,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     baseUrl: 'http://localhost:1234/v1',
     model: 'qwen2.5-coder-7b-instruct',
     apiKey: '',
+    allowAutoRequest: false,
     systemPrompt: `You are BrowseLens AI, an offensive security research assistant integrated into a Chrome extension. You help professional security researchers and hackers analyze HTTP traffic, find vulnerabilities, and craft exploits.
 
 Your capabilities (via tools):

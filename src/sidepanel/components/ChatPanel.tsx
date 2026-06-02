@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatEntry, ToolCall } from '../../shared/types';
 
 // ---- InlineRequestExecutor ----
@@ -174,42 +176,103 @@ function InlineRequestExecutor({ initialRequest }: { initialRequest: string }) {
   );
 }
 
-// ---- Message content renderer (parses code blocks) ----
+// ---- Markdown Renderer Configuration ----
 const HTTP_BLOCK_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\S/i;
 
-function renderMessageContent(content: string) {
-  const parts: React.ReactNode[] = [];
-  const segments = content.split(/(```[\s\S]*?```)/g);
-  segments.forEach((seg, idx) => {
-    const codeMatch = seg.match(/^```(\w*)\n?([\s\S]*?)```$/);
-    if (codeMatch) {
-      const lang = codeMatch[1].toLowerCase();
-      const code = codeMatch[2].trim();
-      const isHttp = lang === 'http' || lang === 'curl' || HTTP_BLOCK_RE.test(code);
-      if (isHttp) {
-        parts.push(<InlineRequestExecutor key={idx} initialRequest={code} />);
-      } else {
-        parts.push(
-          <div key={idx} style={{
-            position: 'relative', marginTop: 8, borderRadius: 6,
-            background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)', overflow: 'hidden'
-          }}>
-            {lang && <span style={{
-              position: 'absolute', top: 4, right: 8, fontSize: 9,
-              color: 'var(--text-muted)', fontFamily: 'monospace', textTransform: 'uppercase'
-            }}>{lang}</span>}
-            <pre style={{
-              margin: 0, padding: '10px 12px', fontFamily: 'monospace', fontSize: 11,
-              color: 'var(--text-primary)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto'
-            }}>{code}</pre>
-          </div>
-        );
-      }
-    } else if (seg) {
-      parts.push(<span key={idx} style={{ whiteSpace: 'pre-wrap' }}>{seg}</span>);
-    }
-  });
-  return <>{parts}</>;
+function MarkdownRenderer({ content }: { content: string }) {
+  // Clean up leaked tool call syntax from local LLMs
+  const cleanContent = content
+    .replace(/\[TOOL_REQUEST\][\s\S]*?\[END_TOOL_REQUEST\]/g, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+    .trim();
+
+  if (!cleanContent) return null;
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ node, inline, className, children, ...props }: any) {
+          const match = /language-(\w+)/.exec(className || '');
+          const lang = match ? match[1].toLowerCase() : '';
+          const code = String(children).replace(/\n$/, '');
+          
+          const isHttp = !inline && (lang === 'http' || lang === 'curl' || HTTP_BLOCK_RE.test(code));
+
+          if (isHttp) {
+            return <InlineRequestExecutor initialRequest={code} />;
+          }
+
+          if (!inline) {
+            return (
+              <div style={{
+                position: 'relative', marginTop: 8, marginBottom: 8, borderRadius: 6,
+                background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)', overflow: 'hidden'
+              }}>
+                {lang && <span style={{
+                  position: 'absolute', top: 4, right: 8, fontSize: 9,
+                  color: 'var(--text-muted)', fontFamily: 'monospace', textTransform: 'uppercase'
+                }}>{lang}</span>}
+                <pre style={{
+                  margin: 0, padding: '10px 12px', fontFamily: 'monospace', fontSize: 11,
+                  color: 'var(--text-primary)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto'
+                }}>
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                </pre>
+              </div>
+            );
+          }
+
+          // Inline code
+          return (
+            <code style={{
+              background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 4,
+              fontFamily: 'monospace', fontSize: '0.9em', color: 'var(--accent-cyan)'
+            }} {...props}>
+              {children}
+            </code>
+          );
+        },
+        a({ href, children }) {
+          return <a href={href} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-cyan)', textDecoration: 'none' }}>{children}</a>;
+        },
+        p({ children }) {
+          return <p style={{ margin: '0 0 8px 0', lineHeight: 1.5 }}>{children}</p>;
+        },
+        ul({ children }) {
+          return <ul style={{ margin: '0 0 8px 0', paddingLeft: 20, lineHeight: 1.5 }}>{children}</ul>;
+        },
+        ol({ children }) {
+          return <ol style={{ margin: '0 0 8px 0', paddingLeft: 20, lineHeight: 1.5 }}>{children}</ol>;
+        },
+        li({ children }) {
+          return <li style={{ marginBottom: 4 }}>{children}</li>;
+        },
+        table({ children }) {
+          return (
+            <div style={{ overflowX: 'auto', marginBottom: 8 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                {children}
+              </table>
+            </div>
+          );
+        },
+        th({ children }) {
+          return <th style={{ border: '1px solid var(--border-color)', padding: '6px 8px', background: 'rgba(255,255,255,0.05)', textAlign: 'left', fontWeight: 600 }}>{children}</th>;
+        },
+        td({ children }) {
+          return <td style={{ border: '1px solid var(--border-color)', padding: '6px 8px' }}>{children}</td>;
+        },
+        h1({ children }) { return <h1 style={{ fontSize: 14, margin: '12px 0 8px 0', color: '#fff' }}>{children}</h1>; },
+        h2({ children }) { return <h2 style={{ fontSize: 13, margin: '12px 0 8px 0', color: '#fff' }}>{children}</h2>; },
+        h3({ children }) { return <h3 style={{ fontSize: 12, margin: '10px 0 6px 0', color: '#fff' }}>{children}</h3>; },
+      }}
+    >
+      {cleanContent}
+    </ReactMarkdown>
+  );
 }
 
 const SUGGESTIONS = [
@@ -220,28 +283,43 @@ const SUGGESTIONS = [
   "Find all requests returning 4xx or 5xx errors",
 ];
 
+function getToolIcon(name: string) {
+  switch (name) {
+    case 'get_captured_requests': return '📜';
+    case 'get_request_detail': return '🔍';
+    case 'search_in_requests': return '🕵️‍♂️';
+    case 'analyze_security_headers': return '🛡️';
+    case 'send_http_request': return '🚀';
+    default: return '🔧';
+  }
+}
+
 export default function ChatPanel() {
   // State for the active project ID (used for per‑project chat persistence)
   const [projectId, setProjectId] = useState<string>('default');
+  const [modelName, setModelName] = useState<string>('AI');
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, toolCalls]);
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [messages, toolCalls, loadedProjectId]);
 
-  // Persist chat history whenever messages change (only after initial load has finished)
+  // Persist chat history whenever messages change (only if the loaded project matches the current project)
   useEffect(() => {
-    if (projectId && isLoaded) {
+    if (projectId && loadedProjectId === projectId) {
       const key = `chatHistory_${projectId}`;
       chrome.storage.local.set({ [key]: messages });
     }
-  }, [messages, projectId, isLoaded]);
+  }, [messages, projectId, loadedProjectId]);
 
   // Listen for tool call updates
   useEffect(() => {
@@ -268,12 +346,15 @@ export default function ChatPanel() {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
       const pid = response?.settings?.currentProjectId || 'default';
       setProjectId(pid);
+      setModelName(response?.settings?.ai?.model || 'cybersecqwen-4b');
     });
     // Listen for settings changes (project switch)
     const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
       if (changes.settings?.newValue) {
-        const newPid = (changes.settings.newValue as any).currentProjectId || 'default';
+        const newSettings = changes.settings.newValue as any;
+        const newPid = newSettings.currentProjectId || 'default';
         setProjectId(newPid);
+        setModelName(newSettings.ai?.model || 'cybersecqwen-4b');
       }
     };
     chrome.storage.onChanged.addListener(storageListener);
@@ -283,7 +364,10 @@ export default function ChatPanel() {
   // Load saved chat history for the active project
   useEffect(() => {
     if (!projectId) return;
-    setIsLoaded(false);
+    
+    // Clear current loaded state while fetching
+    setLoadedProjectId(null);
+    
     const key = `chatHistory_${projectId}`;
     chrome.storage.local.get([key], (res) => {
       const saved = res[key];
@@ -292,7 +376,7 @@ export default function ChatPanel() {
       } else {
         setMessages([]);
       }
-      setIsLoaded(true);
+      setLoadedProjectId(projectId);
     });
   }, [projectId]);
 
@@ -419,13 +503,21 @@ export default function ChatPanel() {
 
         {messages.map((msg, i) => (
           <div key={i} className={`chat-msg ${msg.role}`}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, padding: '0 4px' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: msg.role === 'assistant' ? 'var(--accent-cyan)' : 'var(--accent-yellow)' }}>
+                {msg.role === 'user' ? '👤 You' : `🤖 BrowseLens AI (${modelName})`}
+              </span>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            </div>
             <div className="chat-msg-bubble">
-              <div>{renderMessageContent(msg.content)}</div>
+              <div className="markdown-body"><MarkdownRenderer content={msg.content} /></div>
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <div className="chat-tool-calls">
                   {msg.toolCalls.map((tc) => (
                     <div key={tc.id} className="chat-tool-call">
-                      <span className="tool-icon">🔧</span>
+                      <span className="tool-icon">{getToolIcon(tc.name)}</span>
                       <span className="tool-name">{tc.name}</span>
                       <span className={`tool-status-${tc.status}`}>
                         {tc.status === 'done' ? '✓' : tc.status === 'error' ? '✗' : '⟳'}

@@ -147,6 +147,32 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // ============================================================
 // Tool Execution Functions
 // ============================================================
+// Hash function removed, using real shortId from CapturedRequest
+
+function cleanPentestPayload(content: string, mimeType?: string): string {
+  if (!content) return content;
+  let cleaned = content;
+  // Strip large data URIs
+  cleaned = cleaned.replace(/data:[a-zA-Z0-9/+-]+;base64,[A-Za-z0-9+/=]{100,}/g, 'data:...[TRUNCATED_B64_URI]');
+  // Strip massive continuous strings (likely minified maps, huge JWTs/keys, etc)
+  cleaned = cleaned.replace(/[A-Za-z0-9+/=]{1000,}/g, '[TRUNCATED_LONG_STRING]');
+  // Strip HTML specific bloat
+  if (mimeType?.includes('html') || mimeType?.includes('xml') || cleaned.includes('<html')) {
+    cleaned = cleaned.replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '<svg>[TRUNCATED_SVG]</svg>');
+    cleaned = cleaned.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '<style>[TRUNCATED_CSS]</style>');
+  }
+  return cleaned;
+}
+
+function safeTruncate(val: any, limit: number = 1500, mimeType?: string): string | null {
+  if (!val) return null;
+  let str = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+  str = cleanPentestPayload(str, mimeType);
+  if (str.length > limit) {
+    return str.substring(0, limit) + `\n... [truncated ${str.length - limit} chars]`;
+  }
+  return str;
+}
 
 /** Execute get_captured_requests tool */
 export function executeGetCapturedRequests(
@@ -177,13 +203,14 @@ export function executeGetCapturedRequests(
     }
   }
 
-  const limit = parseInt(args.limit || '50');
-  filtered = filtered.slice(0, limit);
+  const limit = parseInt(args.limit || '15');
+  filtered = filtered.slice(-limit);
 
   const summary = filtered.map(r => ({
     id: r.id,
+    shortId: r.shortId,
     method: r.method,
-    url: r.url,
+    url: r.url.length > 150 ? r.url.substring(0, 150) + '...' : r.url,
     status: r.status,
     duration: r.duration ? `${r.duration}ms` : 'N/A',
     mimeType: r.mimeType,
@@ -195,9 +222,15 @@ export function executeGetCapturedRequests(
 /** Execute get_request_detail tool */
 export function executeGetRequestDetail(
   requests: CapturedRequest[],
-  args: { request_id: string }
+  args: { request_id: string },
+  limit: number = 1500
 ): string {
-  const req = requests.find(r => r.id === args.request_id);
+  let cleanId = args.request_id.trim();
+  if (!cleanId.startsWith('dbg-')) {
+    const match = cleanId.match(/(\d+)/);
+    if (match) cleanId = match[1];
+  }
+  const req = requests.find(r => r.id === cleanId || r.shortId === cleanId || r.id === args.request_id);
   if (!req) return JSON.stringify({ error: `Request ${args.request_id} not found` });
 
   return JSON.stringify({
@@ -205,16 +238,12 @@ export function executeGetRequestDetail(
     method: req.method,
     url: req.url,
     timestamp: new Date(req.timestamp).toISOString(),
-    requestHeaders: req.requestHeaders,
-    requestBody: req.requestBody || null,
+    requestHeaders: safeTruncate(req.requestHeaders, limit),
+    requestBody: safeTruncate(req.requestBody, limit, req.mimeType),
     status: req.status,
     statusText: req.statusText,
-    responseHeaders: req.responseHeaders,
-    responseBody: req.responseBody
-      ? (req.responseBody.length > 5000
-        ? req.responseBody.substring(0, 5000) + '\n... [truncated]'
-        : req.responseBody)
-      : null,
+    responseHeaders: safeTruncate(req.responseHeaders, limit),
+    responseBody: safeTruncate(req.responseBody, limit, req.mimeType),
     duration: req.duration,
     mimeType: req.mimeType,
   }, null, 2);
@@ -269,8 +298,9 @@ export function executeSearchInRequests(
         request_id: req.id,
         url: req.url,
         matches_in: matchLocations,
-        snippet,
+        snippet: snippet.length > 200 ? snippet.substring(0, 200) + '...' : snippet
       });
+      if (results.length >= 15) break; // Limit search results to prevent token explosion
     }
   }
 
@@ -286,7 +316,12 @@ export function executeAnalyzeSecurityHeaders(
   requests: CapturedRequest[],
   args: { request_id: string }
 ): string {
-  const req = requests.find(r => r.id === args.request_id);
+  let cleanId = args.request_id.trim();
+  if (!cleanId.startsWith('dbg-')) {
+    const match = cleanId.match(/(\d+)/);
+    if (match) cleanId = match[1];
+  }
+  const req = requests.find(r => r.id === cleanId || r.shortId === cleanId || r.id === args.request_id);
   if (!req) return JSON.stringify({ error: `Request ${args.request_id} not found` });
   if (!req.responseHeaders) return JSON.stringify({ error: 'No response headers available' });
 

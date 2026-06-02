@@ -55,6 +55,15 @@ export default function App() {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showDomainDropdown, setShowDomainDropdown] = useState(false);
 
+  // Search Configuration States
+  const [showSearchConfig, setShowSearchConfig] = useState(false);
+  const [searchConfig, setSearchConfig] = useState({
+    urlAndMethod: true,
+    headers: true,
+    requestBody: false,
+    responseBody: false,
+  });
+
   const handleSendToBase64 = useCallback((text: string, action?: 'decode' | 'encode') => {
     setToolsInitialBase64Text(text);
     setToolsInitialTab('base64');
@@ -78,11 +87,27 @@ export default function App() {
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
       if (response?.settings) {
         setSettings(response.settings);
+        
+        // Auto-attach to the current tab when the UI opens if capture is enabled
+        if (response.settings.capture?.enabled) {
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs[0] && tabs[0].id) {
+              chrome.runtime.sendMessage({ type: 'ATTACH_TO_TAB', payload: { tabId: tabs[0].id } });
+            }
+          });
+        }
       }
       chrome.runtime.sendMessage({ type: 'GET_REQUESTS' }, (res) => {
         if (res?.requests) setRequests(res.requests);
       });
     });
+  }, []);
+
+  const handleAskAI = useCallback((prompt: string) => {
+    setActiveMainTab('chat');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('ai-trigger-prompt', { detail: { prompt } }));
+    }, 100);
   }, []);
 
   // Listen for new requests from service worker
@@ -121,11 +146,20 @@ export default function App() {
         handleSendToJwt(message.payload.text);
       } else if (message.type === 'TRIGGER_ASK_AI') {
         handleAskAI(message.payload.prompt);
+      } else if (message.type === 'SEND_TO_REPEATER') {
+        setRepeaterRequest({
+          method: message.payload.method,
+          url: message.payload.url,
+          headers: JSON.stringify(message.payload.headers, null, 2),
+          body: message.payload.body || '',
+        });
+        setActiveNetworkTab('requester');
+        setActiveMainTab('network');
       }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [handleSendToBase64, handleSendToJwt]);
+  }, [handleSendToBase64, handleSendToJwt, handleAskAI]);
 
   // Global click-away handler to close all filter dropdowns
   useEffect(() => {
@@ -137,6 +171,7 @@ export default function App() {
         setShowStatusDropdown(false);
         setShowDomainDropdown(false);
         setShowProjectDropdown(false);
+        setShowSearchConfig(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -204,12 +239,6 @@ export default function App() {
     return () => window.removeEventListener('send-to-repeater', handler);
   }, []);
 
-  const handleAskAI = useCallback((prompt: string) => {
-    setActiveMainTab('chat');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('ai-trigger-prompt', { detail: { prompt } }));
-    }, 100);
-  }, []);
 
   const handleUpdateRequest = useCallback((updatedReq: CapturedRequest) => {
     setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
@@ -342,26 +371,40 @@ export default function App() {
   const filteredRequests = requests.filter(r => {
     if (!r) return false;
     
-    // 1. Text Search (URL & Headers)
+    // 1. Text Search (Configurable via searchConfig)
     if (filter) {
       try {
         const f = filter.toLowerCase();
-        const urlStr = r.url ? String(r.url).toLowerCase() : '';
-        const inUrl = urlStr.includes(f);
-        
-        let inHeaders = false;
-        if (r.requestHeaders && typeof r.requestHeaders === 'object') {
-          inHeaders = inHeaders || Object.entries(r.requestHeaders).some(([k,v]) => 
-            String(k).toLowerCase().includes(f) || String(v).toLowerCase().includes(f)
-          );
+        let matched = false;
+
+        if (searchConfig.urlAndMethod) {
+          const urlStr = r.url ? String(r.url).toLowerCase() : '';
+          const methodStr = r.method ? String(r.method).toLowerCase() : '';
+          if (urlStr.includes(f) || methodStr.includes(f)) matched = true;
         }
-        if (r.responseHeaders && typeof r.responseHeaders === 'object') {
-          inHeaders = inHeaders || Object.entries(r.responseHeaders).some(([k,v]) => 
-            String(k).toLowerCase().includes(f) || String(v).toLowerCase().includes(f)
-          );
+
+        if (!matched && searchConfig.headers) {
+          if (r.requestHeaders && typeof r.requestHeaders === 'object') {
+            if (Object.entries(r.requestHeaders).some(([k,v]) => 
+              String(k).toLowerCase().includes(f) || String(v).toLowerCase().includes(f)
+            )) matched = true;
+          }
+          if (!matched && r.responseHeaders && typeof r.responseHeaders === 'object') {
+            if (Object.entries(r.responseHeaders).some(([k,v]) => 
+              String(k).toLowerCase().includes(f) || String(v).toLowerCase().includes(f)
+            )) matched = true;
+          }
         }
-        
-        if (!inUrl && !inHeaders) return false;
+
+        if (!matched && searchConfig.requestBody && r.requestBody) {
+          if (String(r.requestBody).toLowerCase().includes(f)) matched = true;
+        }
+
+        if (!matched && searchConfig.responseBody && r.responseBody) {
+          if (String(r.responseBody).toLowerCase().includes(f)) matched = true;
+        }
+
+        if (!matched) return false;
       } catch (err) {
         console.error('Filter search error', err);
         return false; // Skip if it causes an error
@@ -757,7 +800,7 @@ export default function App() {
                       onClick={() => setFilter('')}
                       style={{
                         position: 'absolute',
-                        right: 4,
+                        right: 28,
                         background: 'none',
                         border: 'none',
                         color: 'var(--text-muted)',
@@ -776,6 +819,63 @@ export default function App() {
                       ✕
                     </button>
                   )}
+                  <div className="dropdown-container" style={{ position: 'absolute', right: 4, display: 'flex', alignItems: 'center' }}>
+                    <button
+                      onClick={() => setShowSearchConfig(!showSearchConfig)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: (searchConfig.requestBody || searchConfig.responseBody) ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 4,
+                        transition: 'color 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = (searchConfig.requestBody || searchConfig.responseBody) ? 'var(--accent-cyan)' : 'var(--text-muted)')}
+                      title="Search Config"
+                    >
+                      ⚙️
+                    </button>
+                    {showSearchConfig && (
+                      <div className="dropdown-menu" style={{ 
+                        position: 'absolute', 
+                        top: '100%', 
+                        right: 0, 
+                        marginTop: 4, 
+                        width: 180, 
+                        zIndex: 100, 
+                        background: 'var(--bg-secondary)', 
+                        border: '1px solid var(--border-color)', 
+                        borderRadius: 6,
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                        padding: '8px'
+                      }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid var(--border-color)' }}>
+                          Search Target
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-primary)', marginBottom: 6, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={searchConfig.urlAndMethod} onChange={(e) => setSearchConfig(prev => ({ ...prev, urlAndMethod: e.target.checked }))} />
+                          URL & Method
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-primary)', marginBottom: 6, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={searchConfig.headers} onChange={(e) => setSearchConfig(prev => ({ ...prev, headers: e.target.checked }))} />
+                          Headers
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-primary)', marginBottom: 6, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={searchConfig.requestBody} onChange={(e) => setSearchConfig(prev => ({ ...prev, requestBody: e.target.checked }))} />
+                          Request Body
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={searchConfig.responseBody} onChange={(e) => setSearchConfig(prev => ({ ...prev, responseBody: e.target.checked }))} />
+                          Response Body
+                        </label>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {requests.length > 0 && (
                   <span style={{ color: 'var(--text-muted)', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', marginRight: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
