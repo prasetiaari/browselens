@@ -22,15 +22,7 @@ function getStatusClass(status?: number): string {
   return 's5xx';
 }
 
-function formatBody(body?: string): string {
-  if (!body) return '';
-  try {
-    const parsed = JSON.parse(body);
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return body; // Not valid JSON, return as is
-  }
-}
+import { formatContent } from '../../shared/format';
 
 function decodeBase64(str: string): string {
   try {
@@ -213,6 +205,47 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
     notesTimeoutRef.current = setTimeout(() => setNotesSaved(false), 1200);
   };
 
+  const [ragPushStatus, setRagPushStatus] = useState<'idle' | 'pushing' | 'success' | 'error'>('idle');
+
+  const handlePushToRAG = () => {
+    if (!localNotes.trim()) return;
+
+    setRagPushStatus('pushing');
+    
+    // Bundle the notes and the raw HTTP request into a single text block
+    const bundledContent = `[USER FINDING / OBSERVATION]
+Catatan: ${localNotes}
+
+[HTTP CONTEXT]
+Method: ${request.method}
+URL: ${request.url}
+Request Headers:
+${JSON.stringify(request.requestHeaders || {}, null, 2)}
+Request Body:
+${request.requestBody ? request.requestBody.substring(0, 500) + (request.requestBody.length > 500 ? '...' : '') : '(empty)'}
+`;
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'SAVE_TO_MEMORY',
+        payload: {
+          knowledge_type: 'finding',
+          target_domain: new URL(request.url).hostname || undefined,
+          content: bundledContent
+        }
+      },
+      (response) => {
+        if (response?.success) {
+          setRagPushStatus('success');
+        } else {
+          setRagPushStatus('error');
+          console.error('Push to RAG failed:', response?.error);
+        }
+        setTimeout(() => setRagPushStatus('idle'), 2000);
+      }
+    );
+  };
+
   const handleExport = async (type: string) => {
     if (!type) return;
     let str = '';
@@ -233,8 +266,8 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
 
   return (
     <div className="request-detail">
-      <div className="detail-header" style={{ paddingBottom: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div className="detail-header" style={{ padding: '4px 8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className={`request-method ${request.method}`} style={{ fontSize: 10 }}>
             {request.method}
           </span>
@@ -330,64 +363,63 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
             onClick={() => setActiveTab('response')}
           >Response</button>
         </div>
-        <div className="detail-actions">
+        <div className="detail-actions" style={{ gap: 2 }}>
           <select 
             className="detail-action-btn"
             style={{ 
               appearance: 'none', 
               background: 'transparent', 
               border: '1px solid var(--border-color)', 
-              padding: '2px 8px', 
+              padding: '2px 4px', 
               borderRadius: 4, 
               color: exporting ? 'var(--accent-green)' : 'var(--text-secondary)',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              fontSize: 10
             }}
             onChange={(e) => {
               handleExport(e.target.value);
               e.target.value = '';
             }}
             value=""
+            title="Export Request"
           >
-            <option value="" disabled>{exporting ? 'Copied!' : 'Export ▾'}</option>
-            <option value="curl">Copy as cURL</option>
-            <option value="python">Copy as Python</option>
-            <option value="fetch">Copy as Fetch</option>
+            <option value="" disabled>{exporting ? '✓' : '⇲'}</option>
+            <option value="curl">cURL</option>
+            <option value="python">Python</option>
+            <option value="fetch">Fetch</option>
           </select>
-          <button className="detail-action-btn" onClick={() => onSendToRepeater(request)} style={{ display: 'flex', alignItems: 'center' }}>
+          <button className="detail-action-btn" onClick={() => onSendToRepeater(request)} style={{ padding: '4px 6px' }} title="Send to Repeater">
             <img 
               src={chrome.runtime.getURL('icons/ui/repeater.svg')} 
-              alt="Send to Repeater" 
-              style={{ width: 14, height: 14, marginRight: 6 }} 
+              alt="Repeater" 
+              style={{ width: 14, height: 14 }} 
             />
-            Send to Repeater
           </button>
           <button
             className="detail-action-btn"
             onClick={() => onAskAI(`Briefly explain the offensive significance of this HTTP request. What parameters look interesting, what is its purpose, and what attack vectors (e.g. IDOR, Parameter Pollution, SQLi, SSRF) should I target here? Keep it short, bulleted, and go straight to the point:\n\nMethod: ${request.method}\nURL: ${request.url}\nHeaders: ${JSON.stringify(request.requestHeaders, null, 2)}\nBody: ${request.requestBody || '(empty)'}`)}
             title="AI: Explain Request"
-            style={{ display: 'flex', alignItems: 'center' }}
+            style={{ padding: '4px 6px' }}
           >
             <img 
               src={chrome.runtime.getURL('icons/ui/explain.svg')} 
               alt="Explain" 
-              style={{ width: 14, height: 14, marginRight: 6 }} 
+              style={{ width: 14, height: 14 }} 
             />
-            AI Explain
           </button>
           <button
             className="detail-action-btn"
             onClick={() => onAskAI(`Perform an offensive security audit on this HTTP request/response. Identify attack vectors, list potential vulnerabilities, and suggest concrete exploit payloads or PoC commands. DO NOT give remediation or defense advice. Keep it strictly focused on exploitation, highly direct, and bulleted:\n\nMethod: ${request.method}\nURL: ${request.url}\nRequest Headers: ${JSON.stringify(request.requestHeaders, null, 2)}\nRequest Body: ${request.requestBody || '(empty)'}\nResponse Headers: ${JSON.stringify(request.responseHeaders || {}, null, 2)}\nPassive Scan Warnings: ${JSON.stringify(request.vulnerabilities || [], null, 2)}`)}
             title="AI: Security Audit"
-            style={{ display: 'flex', alignItems: 'center' }}
+            style={{ padding: '4px 6px' }}
           >
             <img 
               src={chrome.runtime.getURL('icons/ui/audit.svg')} 
               alt="Audit" 
-              style={{ width: 14, height: 14, marginRight: 6 }} 
+              style={{ width: 14, height: 14 }} 
             />
-            AI Audit
           </button>
-          <button className="icon-btn" onClick={onClose} title="Close">
+          <button className="icon-btn" onClick={onClose} title="Close" style={{ padding: '4px 6px' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -644,9 +676,32 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
                     boxSizing: 'border-box',
                     resize: 'vertical',
                     outline: 'none',
-                    lineHeight: 1.4
+                    lineHeight: 1.4,
+                    marginBottom: 8
                   }}
                 />
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button 
+                    onClick={handlePushToRAG}
+                    disabled={!localNotes.trim() || ragPushStatus === 'pushing'}
+                    style={{ 
+                      padding: '4px 8px', 
+                      background: 'rgba(0, 229, 255, 0.1)', 
+                      border: '1px solid rgba(0, 229, 255, 0.3)', 
+                      borderRadius: 4, 
+                      color: ragPushStatus === 'success' ? 'var(--accent-green)' : (ragPushStatus === 'error' ? 'var(--accent-red)' : 'var(--accent-cyan)'), 
+                      fontSize: 10.5, 
+                      fontWeight: 700, 
+                      cursor: localNotes.trim() ? 'pointer' : 'not-allowed',
+                      opacity: localNotes.trim() ? 1 : 0.5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    {ragPushStatus === 'pushing' ? '🧠 Pushing...' : ragPushStatus === 'success' ? '✓ Pushed to Qdrant' : ragPushStatus === 'error' ? '❌ Failed' : '🧠 Push to RAG'}
+                  </button>
+                </div>
               </div>
             ) : (
               <button
@@ -802,8 +857,8 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
             }}>
               {request.url}
             </div>
-            <div className="detail-raw">
-              {formatBody(request.requestBody) || '(no request body)'}
+            <div className="detail-raw" style={{ minHeight: '100%' }}>
+              {formatContent(request.requestBody, request.requestHeaders['content-type']) || '(no request body)'}
             </div>
           </div>
         )}
@@ -827,8 +882,8 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
             </div>
             {!(isImage || isFont) ? (
               <>
-                <div className="detail-raw" style={{ flexShrink: 0 }}>
-                  {formatBody(request.responseBody) || '(no response body captured)'}
+                <div className="detail-raw" style={{ minHeight: '100%' }}>
+                  {formatContent(request.responseBody, request.responseHeaders?.['content-type']) || '(no response body captured)'}
                 </div>
               </>
             ) : (
@@ -1041,7 +1096,12 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
                         {modalCopied ? '✅ Copied' : '📋 Copy Content'}
                       </button>
                     </div>
-                    <pre className="detail-raw" style={{ 
+                    <pre style={{ 
+                      fontSize: 10, 
+                      fontFamily: 'var(--font-mono)', 
+                      color: 'var(--text-primary)', 
+                      padding: 8, 
+                      borderRadius: 4, 
                       maxHeight: 250, 
                       overflowY: 'auto', 
                       background: '#0a0e14', 
@@ -1049,7 +1109,7 @@ export default function RequestDetail({ request, allRequests = [], onSendToRepea
                       whiteSpace: 'pre-wrap',
                       wordBreak: 'break-all'
                     }}>
-                      {formatBody(liveContent)}
+                      {formatContent(liveContent, request.responseHeaders?.['content-type'])}
                     </pre>
                   </div>
                 )}

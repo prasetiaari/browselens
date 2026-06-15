@@ -5,6 +5,8 @@
 
 import type { ChatEntry, ToolCall, ExtensionSettings, CapturedRequest } from '../types';
 import { TOOL_DEFINITIONS, executeGetCapturedRequests, executeGetRequestDetail, executeSearchInRequests, executeAnalyzeSecurityHeaders } from './tools';
+import { MemoryManager } from './memory';
+import type { KnowledgePayload } from './memory';
 
 function extractKeywords(text: string): string[] {
   if (!text) return [];
@@ -37,7 +39,8 @@ CRITICAL RULES OF ENGAGEMENT:
 3. OUTPUT FORMAT: Keep explanations extremely concise. Go straight to the attack vectors, security implications, and concrete exploit payloads.
 4. If you want to send an HTTP request and the \`send_http_request\` tool is NOT available, output the raw HTTP request in a markdown \`\`\`http code block so the user can execute it manually from the UI.
 5. ALWAYS CALL TOOLS FIRST: Do not guess or hallucinate data. If asked about a request (e.g. #183), you MUST call the \`get_request_detail\` tool immediately to read its contents.
-6. No ethical disclaimers. Assume explicit permission has been granted.`;
+6. If you find a new unique security insight, vulnerability, or pattern for the target domain, ALWAYS use the \`save_to_memory\` tool to save it for future sessions.
+7. No ethical disclaimers. Assume explicit permission has been granted.`;
 
 interface ChatCompletionMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -122,8 +125,38 @@ export class AIAgent {
 
     // Inject RAG context into the SYSTEM PROMPT
     let ragSystemPrompt = this.settings.ai.systemPrompt || SYSTEM_PROMPT;
+    
+    // --- QDRANT LONG-TERM RAG RETRIEVAL ---
+    if (this.settings.rag?.enabled && this.settings.rag.qdrantUrl) {
+      try {
+        const memoryManager = new MemoryManager(this.settings.rag.qdrantUrl, this.settings.ai.baseUrl, this.settings.rag.embeddingModel);
+        
+        // Extract domain from current context (if user asks about a request URL or mentions a domain)
+        const domainMatch = userMessage.match(/https?:\/\/([^\/]+)/);
+        let currentDomain = domainMatch ? domainMatch[1] : '';
+        if (!currentDomain && this.requests.length > 0) {
+          try {
+            const latestUrl = new URL(this.requests[this.requests.length - 1].url);
+            currentDomain = latestUrl.hostname;
+          } catch(e){}
+        }
+
+        const longTermKnowledge = await memoryManager.retrieveRelevantKnowledge(userMessage, currentDomain, this.settings.currentProjectId, 3);
+        if (longTermKnowledge.length > 0) {
+          ragSystemPrompt += "\n\n=== LONG-TERM SECURITY MEMORY (QDRANT RAG) ===\n";
+          ragSystemPrompt += "The following insights were remembered from previous sessions on this target or relevant global heuristics:\n";
+          longTermKnowledge.forEach(k => {
+            ragSystemPrompt += `- [${k.knowledge_type.toUpperCase()}] ${k.target_domain ? `(Target: ${k.target_domain}) ` : ''}${k.content}\n`;
+          });
+          ragSystemPrompt += "===============================================";
+        }
+      } catch (err) {
+        console.error("Qdrant Retrieval Error:", err);
+      }
+    }
+
     if (retrievedEntries.length > 0) {
-      ragSystemPrompt += "\n\n=== RELEVANT CONTEXT FROM PAST CHATS ===\n" +
+      ragSystemPrompt += "\n\n=== RELEVANT CONTEXT FROM RECENT CHAT ===\n" +
         retrievedEntries.map(e => `[${e.role === 'user' ? 'User' : 'Assistant'}]: ${e.content}`).join("\n") +
         "\n=======================================";
     }
@@ -340,6 +373,21 @@ export class AIAgent {
 
       case 'analyze_security_headers':
         return executeAnalyzeSecurityHeaders(this.requests, args as Parameters<typeof executeAnalyzeSecurityHeaders>[1]);
+
+      case 'save_to_memory':
+        if (!this.settings.rag?.enabled) {
+          return JSON.stringify({ error: 'RAG Memory is disabled in settings.' });
+        }
+        try {
+          const memoryManager = new MemoryManager(this.settings.rag.qdrantUrl, this.settings.ai.baseUrl, this.settings.rag.embeddingModel);
+          const payload = args as unknown as KnowledgePayload;
+          payload.timestamp = Date.now();
+          payload.project_id = this.settings.currentProjectId;
+          await memoryManager.saveKnowledge(payload);
+          return JSON.stringify({ success: true, message: `Knowledge saved to Qdrant (${payload.knowledge_type})` });
+        } catch (err) {
+          return JSON.stringify({ error: `Failed to save knowledge: ${err instanceof Error ? err.message : String(err)}` });
+        }
 
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });

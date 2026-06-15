@@ -64,7 +64,11 @@ export type MessageType =
   | 'EXECUTE_RAW_HTTP'
   | 'SEND_TO_REPEATER'
   | 'INJECT_MINIBROWSER_MODAL'
-  | 'ATTACH_TO_TAB';
+  | 'ATTACH_TO_TAB'
+  | 'SAVE_TO_MEMORY'
+  | 'GET_ALL_MEMORY'
+  | 'UPDATE_MEMORY'
+  | 'DELETE_MEMORY';
 
 export interface ExtensionMessage {
   type: MessageType;
@@ -176,6 +180,11 @@ export interface ExtensionSettings {
   customHeaders?: CustomHeader[]; // Keep as fallback
   currentProjectId: string;
   projects: Project[];
+  rag: {
+    enabled: boolean;
+    qdrantUrl: string;
+    embeddingModel: string;
+  };
 }
 
 /** Default settings */
@@ -224,4 +233,9 @@ Guidelines:
       matchReplaceRules: [],
     }
   ],
+  rag: {
+    enabled: false,
+    qdrantUrl: 'http://localhost:6333',
+    embeddingModel: 'nomic-embed-text-v1.5',
+  }
 };

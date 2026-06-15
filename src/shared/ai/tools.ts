@@ -142,6 +142,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'save_to_memory',
+      description: 'Save an observation, heuristic, finding, or lesson learned to the Long-Term Memory (RAG Qdrant). Use this when you identify a persistent security insight about a target that should be remembered across sessions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          knowledge_type: {
+            type: 'string',
+            description: 'Type of knowledge',
+            enum: ['observation', 'heuristic', 'finding', 'lesson_learned'],
+          },
+          content: {
+            type: 'string',
+            description: 'The actual insight/knowledge text (e.g. "Target example.com uses predictable auto-incrementing integers for user IDs in /api/profile endpoint")',
+          },
+          target_domain: {
+            type: 'string',
+            description: 'The domain this applies to. Leave empty if it is a global heuristic.',
+          },
+          related_endpoints: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'List of relevant URL endpoints',
+          }
+        },
+        required: ['knowledge_type', 'content'],
+      },
+    },
+  },
 ];
 
 // ============================================================

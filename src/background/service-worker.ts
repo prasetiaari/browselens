@@ -11,6 +11,8 @@ import type {
   ChatEntry,
 } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
+import { MemoryManager } from '../shared/ai/memory';
+import type { KnowledgePayload } from '../shared/ai/memory';
 import { AIAgent } from '../shared/ai/agent';
 import { runPassiveScan } from '../shared/scanner';
 
@@ -698,10 +700,13 @@ function parseRawHTTPRequest(raw: string): { url: string; method: string; header
     const line = headerAndBodyLines[i].trim();
     if (!line) continue;
     const colonIdx = line.indexOf(':');
-    if (colonIdx !== -1) {
+    if (colonIdx > 0) { // must be > 0 to ignore pseudo-headers like :authority
       const name = line.substring(0, colonIdx).trim();
       const value = line.substring(colonIdx + 1).trim();
-      headers[name] = value;
+      // Only add if name is valid (no spaces, not empty)
+      if (name && !/\s/.test(name)) {
+        headers[name] = value;
+      }
     }
   }
   
@@ -1149,6 +1154,7 @@ async function handleMessage(
           method: parsed.method,
           headers: parsed.headers,
           body: parsed.body || undefined,
+          redirect: 'manual'
         });
         const duration = Date.now() - startTime;
 
@@ -1190,11 +1196,19 @@ async function handleMessage(
       };
 
       try {
+        const sanitizedHeaders: Record<string, string> = {};
+        for (const [k, v] of Object.entries(headers || {})) {
+          if (k && !k.startsWith(':') && !/\s/.test(k)) {
+            sanitizedHeaders[k] = v;
+          }
+        }
+
         const startTime = Date.now();
         const response = await fetch(url, {
           method,
-          headers,
+          headers: sanitizedHeaders,
           body: body || undefined,
+          redirect: 'manual'
         });
         const duration = Date.now() - startTime;
 
@@ -1313,6 +1327,95 @@ async function handleMessage(
       }
       sendResponse({ success: true });
       break;
+    }
+
+    case 'SAVE_TO_MEMORY': {
+      if (!settings.rag?.enabled) {
+        sendResponse({ success: false, error: 'RAG Memory is not enabled' });
+        break;
+      }
+      
+      const payload = message.payload as KnowledgePayload;
+      
+      const saveToMemory = async () => {
+        try {
+          const memoryManager = new MemoryManager(
+            settings.rag!.qdrantUrl, 
+            settings.ai.baseUrl, 
+            settings.rag!.embeddingModel
+          );
+          payload.timestamp = Date.now();
+          payload.project_id = settings.currentProjectId;
+          await memoryManager.saveKnowledge(payload);
+          sendResponse({ success: true });
+        } catch (err) {
+          sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      };
+      
+      saveToMemory();
+      return true;
+    }
+
+    case 'GET_ALL_MEMORY': {
+      if (!settings.rag?.enabled) {
+        sendResponse({ success: false, data: [] });
+        break;
+      }
+      const getAllMemory = async () => {
+        try {
+          const memoryManager = new MemoryManager(
+            settings.rag!.qdrantUrl, 
+            settings.ai.baseUrl, 
+            settings.rag!.embeddingModel
+          );
+          const data = await memoryManager.getAllKnowledge(settings.currentProjectId);
+          sendResponse({ success: true, data });
+        } catch (err) {
+          sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      };
+      getAllMemory();
+      return true;
+    }
+
+    case 'DELETE_MEMORY': {
+      const { id } = message.payload as { id: string };
+      const deleteMemory = async () => {
+        try {
+          const memoryManager = new MemoryManager(
+            settings.rag!.qdrantUrl, 
+            settings.ai.baseUrl, 
+            settings.rag!.embeddingModel
+          );
+          await memoryManager.deleteKnowledge(id);
+          sendResponse({ success: true });
+        } catch (err) {
+          sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      };
+      deleteMemory();
+      return true;
+    }
+
+    case 'UPDATE_MEMORY': {
+      const { id, payload } = message.payload as { id: string, payload: KnowledgePayload };
+      const updateMemory = async () => {
+        try {
+          const memoryManager = new MemoryManager(
+            settings.rag!.qdrantUrl, 
+            settings.ai.baseUrl, 
+            settings.rag!.embeddingModel
+          );
+          payload.project_id = settings.currentProjectId; // ensure project id
+          await memoryManager.updateKnowledge(id, payload);
+          sendResponse({ success: true });
+        } catch (err) {
+          sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      };
+      updateMemory();
+      return true;
     }
 
     case 'SWITCH_PROJECT': {

@@ -8,8 +8,9 @@ import Repeater from './components/Repeater';
 import ChatPanel from './components/ChatPanel';
 import Settings from './components/Settings';
 import ToolsPanel from './components/ToolsPanel';
+import MemoryManagerPanel from './components/MemoryManagerPanel';
 
-type MainTab = 'network' | 'chat' | 'tools' | 'settings';
+type MainTab = 'network' | 'chat' | 'tools' | 'settings' | 'memory';
 type NetworkSubTab = 'history' | 'tagged' | 'requester';
 
 export default function App() {
@@ -23,6 +24,10 @@ export default function App() {
   
   const [requests, setRequests] = useState<CapturedRequest[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<CapturedRequest | null>(null);
+  
+  // Resizable bottom pane state
+  const [detailPaneHeight, setDetailPaneHeight] = useState(300);
+  const [isDraggingDetail, setIsDraggingDetail] = useState(false);
   
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<CapturedRequest[]>([]);
@@ -121,7 +126,12 @@ export default function App() {
             updated[existing] = { ...updated[existing], ...message.payload };
             return updated;
           }
-          return [...prev, message.payload];
+          const historyLimit = settings.capture?.maxHistoryLimit || 1000;
+          const newList = [...prev, message.payload];
+          if (newList.length > historyLimit) {
+            return newList.slice(-historyLimit);
+          }
+          return newList;
         });
 
         setSelectedRequest(prev => {
@@ -159,7 +169,7 @@ export default function App() {
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [handleSendToBase64, handleSendToJwt, handleAskAI]);
+  }, [handleSendToBase64, handleSendToJwt, handleAskAI, settings.capture?.maxHistoryLimit]);
 
   // Global click-away handler to close all filter dropdowns
   useEffect(() => {
@@ -536,6 +546,35 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeMainTab, activeNetworkTab, filteredRequests, selectedRequest, handleSelectRequest]);
 
+  // Handle detail pane resizing
+  useEffect(() => {
+    if (!isDraggingDetail) return;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      // We calculate new height based on window height minus mouse Y
+      // We also subtract a little bit to account for bottom bars if any, but window.innerHeight - e.clientY works well for fixed layouts.
+      let newHeight = window.innerHeight - e.clientY;
+      if (newHeight < 100) newHeight = 100; // Min height
+      if (newHeight > window.innerHeight - 150) newHeight = window.innerHeight - 150; // Max height
+      setDetailPaneHeight(newHeight);
+    };
+    
+    const handleMouseUp = () => {
+      setIsDraggingDetail(false);
+      document.body.style.cursor = 'default';
+    };
+    
+    document.body.style.cursor = 'row-resize';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'default';
+    };
+  }, [isDraggingDetail]);
+
   return (
     <div className="app">
       {/* Project Selector Bar */}
@@ -725,6 +764,13 @@ export default function App() {
           Tools
         </button>
         <button
+          className={`tab-btn ${activeMainTab === 'memory' ? 'active' : ''}`}
+          onClick={() => setActiveMainTab('memory')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          🧠 Memory
+        </button>
+        <button
           className={`tab-btn ${activeMainTab === 'settings' ? 'active' : ''}`}
           onClick={() => setActiveMainTab('settings')}
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
@@ -752,6 +798,10 @@ export default function App() {
       <div className="main-content">
         <div style={{ display: activeMainTab === 'settings' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
           <Settings settings={settings} onSave={setSettings} />
+        </div>
+        
+        <div style={{ display: activeMainTab === 'memory' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+          <MemoryManagerPanel />
         </div>
         
         <div style={{ display: activeMainTab === 'network' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
@@ -1401,9 +1451,32 @@ export default function App() {
                   />
                 </div>
                 
+                {((compareMode && selectedForCompare.length > 0) || (!compareMode && selectedRequest)) && (
+                  <div
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setIsDraggingDetail(true);
+                    }}
+                    style={{
+                      height: 5,
+                      background: isDraggingDetail ? 'var(--accent-cyan)' : 'var(--border-color)',
+                      cursor: 'row-resize',
+                      flexShrink: 0,
+                      transition: 'background 0.2s',
+                      opacity: isDraggingDetail ? 1 : 0.5
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isDraggingDetail) e.currentTarget.style.background = 'var(--accent-cyan)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isDraggingDetail) e.currentTarget.style.background = 'var(--border-color)';
+                    }}
+                  />
+                )}
+                
                 {compareMode ? (
                   selectedForCompare.length === 2 ? (
-                    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ height: detailPaneHeight, flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                       <RequestDiff
                         requestA={selectedForCompare[0]}
                         requestB={selectedForCompare[1]}
@@ -1411,20 +1484,24 @@ export default function App() {
                       />
                     </div>
                   ) : (
-                    <div style={{
-                      padding: 12,
-                      textAlign: 'center',
-                      color: 'var(--text-muted)',
-                      fontSize: 10,
-                      background: 'var(--bg-light)',
-                      borderTop: '1px solid var(--border-color)'
-                    }}>
-                      ⚔️ Compare Mode Active. Select <b>{2 - selectedForCompare.length}</b> more request{2 - selectedForCompare.length > 1 ? 's' : ''} from history to compare.
-                    </div>
+                    selectedForCompare.length > 0 && (
+                      <div style={{
+                        padding: 12,
+                        textAlign: 'center',
+                        color: 'var(--text-muted)',
+                        fontSize: 10,
+                        background: 'var(--bg-light)',
+                        borderTop: '1px solid var(--border-color)',
+                        height: detailPaneHeight,
+                        flexShrink: 0
+                      }}>
+                        ⚔️ Compare Mode Active. Select <b>{2 - selectedForCompare.length}</b> more request{2 - selectedForCompare.length > 1 ? 's' : ''} from history to compare.
+                      </div>
+                    )
                   )
                 ) : (
                   selectedRequest && (
-                    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ height: detailPaneHeight, flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                       <RequestDetail
                         request={selectedRequest}
                         allRequests={requests}

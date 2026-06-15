@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import NestedBodyEditor from './NestedBodyEditor';
 
 interface Props {
   initialRequest?: {
@@ -26,15 +27,7 @@ function getStatusClass(status: number): string {
   return 's5xx';
 }
 
-function formatBody(body?: string): string {
-  if (!body) return '';
-  try {
-    const parsed = JSON.parse(body);
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return body; // Not valid JSON, return as is
-  }
-}
+import { formatContent } from '../../shared/format';
 
 export default function Repeater({ initialRequest }: Props) {
   const [method, setMethod] = useState('GET');
@@ -50,6 +43,16 @@ export default function Repeater({ initialRequest }: Props) {
   const [responseTab, setResponseTab] = useState<'body' | 'headers'>('body');
   const [showPayloads, setShowPayloads] = useState(false);
   const [payloadCopied, setPayloadCopied] = useState<string | null>(null);
+  const [bodyTab, setBodyTab] = useState<'raw' | 'tree'>('raw');
+  const [prunedBody, setPrunedBody] = useState<string | null>(null);
+
+  const isGraphQL = useMemo(() => {
+    if (!body) return false;
+    // Check if it looks like a GraphQL request (has 'query' or 'variables' keys)
+    // We use a regex or loose check so that the toggle doesn't disappear
+    // if the user temporarily makes a JSON syntax error.
+    return /"query"\s*:/i.test(body) || /"variables"\s*:/i.test(body) || /"operationName"\s*:/i.test(body);
+  }, [body]);
 
   const payloads = [
     {
@@ -136,9 +139,13 @@ export default function Repeater({ initialRequest }: Props) {
     chrome.runtime.sendMessage(
       {
         type: 'REPLAY_REQUEST',
-        payload: { method, url, headers: parsedHeaders, body: body || undefined },
-      },
-      (res) => {
+        payload: {
+          method,
+          url,
+          headers: parsedHeaders,
+          body: hasBody && body ? (prunedBody && bodyTab === 'tree' ? prunedBody : body) : undefined,
+        }
+      },(res) => {
         setSending(false);
         if (res?.success) {
           setResponse(res.response);
@@ -239,9 +246,9 @@ export default function Repeater({ initialRequest }: Props) {
               </label>
               <button
                 style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', fontSize: 10, cursor: 'pointer', opacity: 0.8 }}
-                onClick={() => setHeaders(formatBody(headers))}
+                onClick={() => setHeaders(formatContent(headers, 'application/json'))}
               >
-                {`{ } Format JSON`}
+                {`✨ Format JSON`}
               </button>
             </div>
             <textarea
@@ -257,23 +264,45 @@ export default function Repeater({ initialRequest }: Props) {
         {activeTab === 'req_body' && hasBody && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>
-                Request Body
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>
+                  Request Body
+                </label>
+                <div className="detail-tabs" style={{ background: 'var(--bg-darker)', padding: 2, borderRadius: 4 }}>
+                  <button
+                    className={`detail-tab ${bodyTab === 'raw' ? 'active' : ''}`}
+                    style={{ padding: '2px 8px', fontSize: 10 }}
+                    onClick={() => setBodyTab('raw')}
+                  >
+                    Raw
+                  </button>
+                  <button
+                    className={`detail-tab ${bodyTab === 'tree' ? 'active' : ''}`}
+                    style={{ padding: '2px 8px', fontSize: 10 }}
+                    onClick={() => setBodyTab('tree')}
+                  >
+                    Tree / Visual
+                  </button>
+                </div>
+              </div>
               <button
                 style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', fontSize: 10, cursor: 'pointer', opacity: 0.8 }}
-                onClick={() => setBody(formatBody(body))}
+                onClick={() => setBody(formatContent(body))}
               >
-                {`{ } Format JSON`}
+                {`✨ Format`}
               </button>
             </div>
-            <textarea
-              className="repeater-textarea"
-              style={{ flex: 1 }}
-              value={body}
-              onChange={e => setBody(e.target.value)}
-              placeholder='{"key": "value"}'
-            />
+            {bodyTab === 'tree' ? (
+              <NestedBodyEditor body={body} onChange={setBody} onPrunedChange={setPrunedBody} />
+            ) : (
+              <textarea
+                className="repeater-textarea"
+                style={{ flex: 1 }}
+                value={body}
+                onChange={e => setBody(e.target.value)}
+                placeholder='{"key": "value"}'
+              />
+            )}
           </div>
         )}
 
@@ -324,7 +353,7 @@ export default function Repeater({ initialRequest }: Props) {
                 </div>
               )}
               {response && !sending && responseTab === 'body' && (
-                <div className="detail-raw" style={{ minHeight: '100%' }}>{formatBody(response.body)}</div>
+                <div className="detail-raw" style={{ minHeight: '100%' }}>{formatContent(response.body, response.headers['content-type'])}</div>
               )}
               {response && !sending && responseTab === 'headers' && (
                 <div className="detail-kv">

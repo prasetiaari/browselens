@@ -16,6 +16,12 @@ export default function Settings({ settings, onSave }: Props) {
   const [saved, setSaved] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  
+  // Manual Memory Entry State
+  const [manualMemoryType, setManualMemoryType] = useState<'observation' | 'heuristic' | 'finding' | 'lesson_learned'>('heuristic');
+  const [manualMemoryDomain, setManualMemoryDomain] = useState('');
+  const [manualMemoryContent, setManualMemoryContent] = useState('');
+  const [memorySaveStatus, setMemorySaveStatus] = useState<string | null>(null);
 
   const fetchDebugLogs = () => {
     chrome.storage.local.get('debug_log', (res) => {
@@ -63,6 +69,35 @@ export default function Settings({ settings, onSave }: Props) {
             });
           }
         }
+      }
+    );
+  };
+
+  const handleManualMemorySave = () => {
+    if (!manualMemoryContent.trim()) {
+      setMemorySaveStatus('Content cannot be empty');
+      setTimeout(() => setMemorySaveStatus(null), 2000);
+      return;
+    }
+
+    setMemorySaveStatus('Saving...');
+    chrome.runtime.sendMessage(
+      {
+        type: 'SAVE_TO_MEMORY',
+        payload: {
+          knowledge_type: manualMemoryType,
+          target_domain: manualMemoryDomain.trim() || undefined,
+          content: manualMemoryContent.trim()
+        }
+      },
+      (response) => {
+        if (response?.success) {
+          setMemorySaveStatus('Saved to Qdrant! ✅');
+          setManualMemoryContent('');
+        } else {
+          setMemorySaveStatus(`Error: ${response?.error}`);
+        }
+        setTimeout(() => setMemorySaveStatus(null), 3000);
       }
     );
   };
@@ -265,6 +300,109 @@ export default function Settings({ settings, onSave }: Props) {
                   Setting this too high (e.g. &gt; 5000) may impact Sidepanel rendering.
                 </p>
               </div>
+            </div>
+            
+            {/* MEMORY / RAG SETTINGS */}
+            <div className="settings-section" style={{ marginBottom: 20 }}>
+              <h3>🧠 Long-Term Memory (RAG)</h3>
+
+              <div className="settings-field" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={local.rag?.enabled || false}
+                  onChange={e => setLocal({
+                    ...local,
+                    rag: { ...(local.rag || {qdrantUrl: 'http://localhost:6333', embeddingModel: 'nomic-embed-text-v1.5'}), enabled: e.target.checked },
+                  })}
+                  style={{ cursor: 'pointer' }}
+                />
+                <label style={{ fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Enable Qdrant Memory System</label>
+              </div>
+
+              {local.rag?.enabled && (
+                <>
+                  <div className="settings-field" style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Qdrant URL</label>
+                    <input
+                      type="text"
+                      value={local.rag.qdrantUrl}
+                      onChange={e => setLocal({
+                        ...local,
+                        rag: { ...local.rag, qdrantUrl: e.target.value }
+                      })}
+                      placeholder="http://localhost:6333"
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-darker)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div className="settings-field" style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Embedding Model (via LM Studio)</label>
+                    <input
+                      type="text"
+                      value={local.rag.embeddingModel}
+                      onChange={e => setLocal({
+                        ...local,
+                        rag: { ...local.rag, embeddingModel: e.target.value }
+                      })}
+                      placeholder="nomic-embed-text-v1.5"
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-darker)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Model used to convert text to vectors. Must be loaded in LM Studio's Local Server (Embedding Model slot).
+                    </div>
+                  </div>
+
+                  {/* MANUAL ENTRY FORM */}
+                  <div style={{ 
+                    marginTop: 16, 
+                    padding: 12, 
+                    background: 'rgba(255,255,255,0.03)', 
+                    border: '1px dashed var(--border-color)', 
+                    borderRadius: 6 
+                  }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                      <span>✍️ Add Manual Memory</span>
+                      {memorySaveStatus && <span style={{ color: memorySaveStatus.includes('Error') ? 'var(--accent-red)' : 'var(--accent-green)', fontWeight: 400 }}>{memorySaveStatus}</span>}
+                    </h4>
+                    
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <select 
+                        value={manualMemoryType}
+                        onChange={e => setManualMemoryType(e.target.value as any)}
+                        style={{ flex: 1, padding: '6px', background: 'var(--bg-darker)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 11 }}
+                      >
+                        <option value="heuristic">Heuristic (Global)</option>
+                        <option value="observation">Observation (Target)</option>
+                        <option value="finding">Finding</option>
+                        <option value="lesson_learned">Lesson Learned</option>
+                      </select>
+
+                      <input 
+                        type="text" 
+                        placeholder="Target Domain (Optional)" 
+                        value={manualMemoryDomain}
+                        onChange={e => setManualMemoryDomain(e.target.value)}
+                        style={{ flex: 1, padding: '6px', background: 'var(--bg-darker)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 11 }}
+                      />
+                    </div>
+                    
+                    <textarea 
+                      placeholder="Enter knowledge or finding here..."
+                      value={manualMemoryContent}
+                      onChange={e => setManualMemoryContent(e.target.value)}
+                      rows={3}
+                      style={{ width: '100%', padding: '6px', background: 'var(--bg-darker)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 11, resize: 'vertical', boxSizing: 'border-box' }}
+                    />
+                    
+                    <button 
+                      onClick={handleManualMemorySave}
+                      style={{ marginTop: 8, padding: '6px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 11, cursor: 'pointer' }}
+                    >
+                      💾 Inject into Qdrant
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
 
             <button
